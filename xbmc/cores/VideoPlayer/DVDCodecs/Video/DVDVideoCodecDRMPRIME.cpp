@@ -29,6 +29,8 @@
 extern "C"
 {
 #include <libavcodec/avcodec.h>
+#include <libavfilter/buffersink.h>
+#include <libavfilter/buffersrc.h>
 #include <libavutil/error.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
@@ -668,6 +670,54 @@ void CDVDVideoCodecDRMPRIME::SetPictureParams(VideoPicture* pVideoPicture)
   pVideoPicture->dts = DVD_NOPTS_VALUE;
 }
 
+CDVDVideoCodec::VCReturn CDVDVideoCodecDRMPRIME::ProcessFilterIn()
+{
+  if (!m_pFilterIn)
+    return VC_PICTURE;
+
+  int ret = av_buffersrc_add_frame(m_pFilterIn, m_pFrame);
+  if (ret < 0)
+  {
+    char err[AV_ERROR_MAX_STRING_SIZE] = {};
+    av_strerror(ret, err, AV_ERROR_MAX_STRING_SIZE);
+    CLog::Log(LOGERROR, "CDVDVideoCodecDRMPRIME::{} - buffersrc add frame failed: {} ({})",
+              __FUNCTION__, err, ret);
+    return VC_ERROR;
+  }
+
+  return ProcessFilterOut();
+}
+
+CDVDVideoCodec::VCReturn CDVDVideoCodecDRMPRIME::ProcessFilterOut()
+{
+  if (!m_pFilterOut)
+    return VC_EOF;
+
+  int ret = av_buffersink_get_frame(m_pFilterOut, m_pFrame);
+  if (ret == AVERROR(EAGAIN))
+    return VC_BUFFER;
+  else if (ret == AVERROR_EOF)
+  {
+    if (m_codecControlFlags & DVD_CODEC_CTRL_DRAIN)
+    {
+      CLog::Log(LOGDEBUG, "CDVDVideoCodecDRMPRIME::{} - flush buffers", __FUNCTION__);
+      avcodec_flush_buffers(m_pCodecContext);
+      SetCodecControl(m_codecControlFlags & ~DVD_CODEC_CTRL_DRAIN);
+    }
+    return VC_EOF;
+  }
+  else if (ret)
+  {
+    char err[AV_ERROR_MAX_STRING_SIZE] = {};
+    av_strerror(ret, err, AV_ERROR_MAX_STRING_SIZE);
+    CLog::Log(LOGERROR, "CDVDVideoCodecDRMPRIME::{} - buffersink get frame failed: {} ({})",
+              __FUNCTION__, err, ret);
+    return VC_ERROR;
+  }
+
+  return VC_PICTURE;
+}
+
 CDVDVideoCodec::VCReturn CDVDVideoCodecDRMPRIME::GetPicture(VideoPicture* pVideoPicture)
 {
   if (!m_pCodecContext)
@@ -701,29 +751,29 @@ CDVDVideoCodec::VCReturn CDVDVideoCodecDRMPRIME::GetPicture(VideoPicture* pVideo
   if (m_codecControlFlags & DVD_CODEC_CTRL_DRAIN)
     Drain();
 
-  int ret = avcodec_receive_frame(m_pCodecContext, m_pFrame);
-  if (ret == AVERROR(EAGAIN))
-    return VC_BUFFER;
-  else if (ret == AVERROR_EOF)
+  auto result = ProcessFilterOut();
+  if (result != VC_PICTURE)
   {
-    if (m_codecControlFlags & DVD_CODEC_CTRL_DRAIN)
+    int ret = avcodec_receive_frame(m_pCodecContext, m_pFrame);
+    if (ret == AVERROR(EAGAIN))
+      return VC_BUFFER;
+    else if (ret == AVERROR_EOF)
+      return VC_EOF;
+    else if (ret)
     {
-      CLog::Log(LOGDEBUG, "CDVDVideoCodecDRMPRIME::{} - flush buffers", __FUNCTION__);
-      avcodec_flush_buffers(m_pCodecContext);
-      SetCodecControl(m_codecControlFlags & ~DVD_CODEC_CTRL_DRAIN);
+      char err[AV_ERROR_MAX_STRING_SIZE] = {};
+      av_strerror(ret, err, AV_ERROR_MAX_STRING_SIZE);
+      CLog::Log(LOGERROR, "CDVDVideoCodecDRMPRIME::{} - receive frame failed: {} ({})",
+                __FUNCTION__, err, ret);
+      return VC_ERROR;
     }
-    return VC_EOF;
-  }
-  else if (ret)
-  {
-    char err[AV_ERROR_MAX_STRING_SIZE] = {};
-    av_strerror(ret, err, AV_ERROR_MAX_STRING_SIZE);
-    CLog::Log(LOGERROR, "CDVDVideoCodecDRMPRIME::{} - receive frame failed: {} ({})", __FUNCTION__,
-              err, ret);
-    return VC_ERROR;
-  }
 
-  m_pictureDecoded = true;
+    m_pictureDecoded = true;
+
+    result = ProcessFilterIn();
+    if (result != VC_PICTURE)
+      return result;
+  }
 
   // ffmpeg's v4l2m2m resizes without re-invoking our GetFormat callback; republish from the frames
   int piWidth, piHeight;
