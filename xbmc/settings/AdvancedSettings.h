@@ -106,6 +106,12 @@ struct RefreshVideoLatency
   float hdrextradelay;
 };
 
+struct AddonUplink
+{
+  std::string addonId;
+  std::string localAddress;
+};
+
 using SETTINGS_TVSHOWLIST = std::vector<TVShowRegexp>;
 
 using AdvancedSettingsCallback = std::function<void()>;
@@ -146,6 +152,8 @@ class CAdvancedSettings : public ISettingCallback, public ISettingsHandler
      * \param[in] handle callback handle
      */
     void UnregisterSettingsLoadedCallback(int handle);
+
+    std::string GetAddonUplink(const std::string& addonId) const;
 
     static void GetCustomTVRegexps(const TiXmlElement* pRootElement, SETTINGS_TVSHOWLIST& settings);
     static void GetCustomRegexps(const TiXmlElement* pRootElement,
@@ -337,6 +345,8 @@ class CAdvancedSettings : public ISettingCallback, public ISettingsHandler
     int m_curlKeepAliveInterval;    // seconds
     bool m_curlDisableIPV6;
     bool m_curlDisableHTTP2;
+
+    std::vector<AddonUplink> m_addonUplinks;
 
     std::string m_caTrustFile;
 
