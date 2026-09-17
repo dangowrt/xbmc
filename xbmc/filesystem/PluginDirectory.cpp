@@ -20,6 +20,8 @@
 #include "addons/addoninfo/AddonType.h"
 #include "interfaces/generic/RunningScriptObserver.h"
 #include "messaging/ApplicationMessenger.h"
+#include "network/UplinkAddress.h"
+#include "settings/AdvancedSettings.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
 #include "utils/URIUtils.h"
@@ -51,6 +53,33 @@ std::string GetOriginalPluginPath(const CFileItem& item)
     return currentPath;
 
   return std::string();
+}
+
+void ApplyAddonUplink(const std::string& addonId, CFileItem& item)
+{
+  const std::string spec =
+      CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->GetAddonUplink(addonId);
+  if (spec.empty())
+    return;
+
+  const std::string path = item.GetPath();
+  if (!URIUtils::IsHTTP(path))
+    return;
+
+  const std::string address = KODI::NETWORK::ResolveUplinkAddress(spec);
+  if (address.empty())
+    return;
+
+  CURL url(path);
+  url.SetProtocolOption("local_addr", address);
+  item.SetPath(url.Get());
+
+  const std::string inputstream = item.GetProperty("inputstream").asString();
+  if (!inputstream.empty())
+    item.SetProperty(inputstream + ".local_address", spec);
+
+  CLog::Log(LOGDEBUG, "CPluginDirectory::{} - {} plays through uplink {}", __FUNCTION__, addonId,
+            spec);
 }
 } // unnamed namespace
 
@@ -506,6 +535,9 @@ void CPluginDirectory::SetResolvedUrl(int handle, bool success, const CFileItem 
 
   dir->m_success = success;
   *dir->m_fileResult = *resultItem;
+
+  if (success && dir->GetAddon())
+    ApplyAddonUplink(dir->GetAddon()->ID(), *dir->m_fileResult);
 
   // set the event to mark that we're done
   dir->SetDone();
