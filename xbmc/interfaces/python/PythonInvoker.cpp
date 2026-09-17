@@ -26,8 +26,11 @@
 #include "interfaces/python/PythonToCppException.h"
 #include "interfaces/python/pythreadstate.h"
 #include "messaging/ApplicationMessenger.h"
+#include "network/UplinkAddress.h"
 #include "resources/LocalizeStrings.h"
 #include "resources/ResourcesComponent.h"
+#include "settings/AdvancedSettings.h"
+#include "settings/SettingsComponent.h"
 #include "threads/SingleLock.h"
 #include "threads/SystemClock.h"
 #include "utils/CharsetConverter.h"
@@ -64,6 +67,44 @@ extern "C" FILE* fopen_utf8(const char* _Filename, const char* _Mode);
 
 using namespace XFILE;
 using namespace std::chrono_literals;
+
+namespace
+{
+PyObject* uplinkAddress(PyObject* self, PyObject* args)
+{
+  const char* spec = nullptr;
+  const char* host = nullptr;
+
+  if (!PyArg_ParseTuple(args, "ss", &spec, &host))
+    return nullptr;
+
+  if (KODI::NETWORK::IsDirectDestination(host))
+    return PyUnicode_FromString("");
+
+  return PyUnicode_FromString(KODI::NETWORK::ResolveUplinkAddress(spec).c_str());
+}
+
+PyMethodDef uplinkAddressMethod = {"__xbmcuplinkaddress__", uplinkAddress, METH_VARARGS, nullptr};
+
+const char* uplinkBootstrap = R"PY(
+import socket as _socket
+
+def _kodi_bind_uplink(sock, address, _connect=_socket.socket.connect):
+    try:
+        if (sock.family == _socket.AF_INET and sock.type == _socket.SOCK_STREAM
+                and sock.getsockname()[1] == 0):
+            source = __xbmcuplinkaddress__(__xbmcuplink__, str(address[0]))
+            if source:
+                sock.bind((source, 0))
+    except (OSError, IndexError, TypeError):
+        pass
+    return _connect(sock, address)
+
+if not getattr(_socket.socket.connect, "_kodi_uplink", False):
+    _kodi_bind_uplink._kodi_uplink = True
+    _socket.socket.connect = _kodi_bind_uplink
+)PY";
+} // unnamed namespace
 
 static const std::string getListOfAddonClassesAsString(
     XBMCAddon::AddonClass::Ref<XBMCAddon::Python::PythonLanguageHook>& languageHook)
@@ -693,6 +734,34 @@ void CPythonInvoker::onPythonModuleInitialization(void* moduleDict)
             "CPythonInvoker({}, {}): instantiating addon using automatically obtained id of \"{}\" "
             "dependent on version {} of the xbmc.python api",
             GetId(), m_sourceFile, m_addon->ID(), version.asString());
+
+  onUplinkInitialization(moduleDictionary);
+}
+
+void CPythonInvoker::onUplinkInitialization(void* moduleDict)
+{
+  const std::string spec =
+      CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->GetAddonUplink(m_addon->ID());
+  if (spec.empty())
+    return;
+
+  PyObject* moduleDictionary = static_cast<PyObject*>(moduleDict);
+
+  PyDict_SetItemString(moduleDictionary, "__xbmcuplink__",
+                       PyObjectPtr(PyUnicode_FromString(spec.c_str())).get());
+  PyDict_SetItemString(moduleDictionary, "__xbmcuplinkaddress__",
+                       PyObjectPtr(PyCFunction_New(&uplinkAddressMethod, nullptr)).get());
+
+  if (!PyObjectPtr(PyRun_String(uplinkBootstrap, Py_file_input, moduleDictionary, moduleDictionary)))
+  {
+    CLog::Log(LOGERROR, "CPythonInvoker({}, {}): failed to bind {} to uplink {}", GetId(),
+              m_sourceFile, m_addon->ID(), spec);
+    PyErr_Clear();
+    return;
+  }
+
+  CLog::Log(LOGDEBUG, "CPythonInvoker({}, {}): {} leaves through uplink {}", GetId(), m_sourceFile,
+            m_addon->ID(), spec);
 }
 
 void CPythonInvoker::onDeinitialization()
