@@ -73,7 +73,8 @@ public:
   void easy_acquire(const char* protocol,
                     const char* hostname,
                     CURL_HANDLE** easy_handle,
-                    CURLM** multi_handle);
+                    CURLM** multi_handle,
+                    const char* uplinkaddress = nullptr);
   void easy_release(CURL_HANDLE** easy_handle, CURLM** multi_handle);
   void easy_duplicate(CURL_HANDLE* easy,
                       const CURLM* multi,
@@ -91,6 +92,7 @@ public:
         m_idletimestamp; // timestamp of when this object when idle
     std::string m_protocol;
     std::string m_hostname;
+    std::string m_uplinkaddress;
     bool m_busy;
     CURL_HANDLE* m_easy;
     CURLM* m_multi;

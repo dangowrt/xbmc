@@ -171,9 +171,12 @@ void DllLibCurlGlobal::CheckIdle()
 void DllLibCurlGlobal::easy_acquire(const char* protocol,
                                     const char* hostname,
                                     CURL_HANDLE** easy_handle,
-                                    CURLM** multi_handle)
+                                    CURLM** multi_handle,
+                                    const char* uplinkaddress /* = nullptr */)
 {
   assert(easy_handle != NULL);
+
+  const std::string uplink = uplinkaddress ? uplinkaddress : "";
 
   std::unique_lock lock(m_critSection);
 
@@ -183,7 +186,9 @@ void DllLibCurlGlobal::easy_acquire(const char* protocol,
     {
       /* allow reuse of requester is trying to connect to same host */
       /* curl will take care of any differences in username/password */
-      if (it.m_protocol.compare(protocol) == 0 && it.m_hostname.compare(hostname) == 0)
+      /* a handle bound to another uplink would keep its own connections */
+      if (it.m_protocol.compare(protocol) == 0 && it.m_hostname.compare(hostname) == 0 &&
+          it.m_uplinkaddress == uplink)
       {
         it.m_busy = true;
         if (easy_handle)
@@ -211,6 +216,7 @@ void DllLibCurlGlobal::easy_acquire(const char* protocol,
   session.m_busy = true;
   session.m_protocol = protocol;
   session.m_hostname = hostname;
+  session.m_uplinkaddress = uplink;
 
   if (easy_handle)
   {

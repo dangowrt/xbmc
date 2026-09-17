@@ -178,6 +178,7 @@ namespace XFILE
       std::string m_password;
       std::string m_httpauth;
       std::string m_cipherlist;
+      std::string m_uplinkAddress;
       bool m_ftppasvip;
       int m_connecttimeout;
       int m_redirectlimit;

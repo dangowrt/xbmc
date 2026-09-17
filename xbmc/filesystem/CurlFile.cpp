@@ -13,6 +13,7 @@
 #include "URL.h"
 #include "filesystem/SpecialProtocol.h"
 #include "network/DNSNameCache.h"
+#include "network/UplinkAddress.h"
 #include "settings/AdvancedSettings.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
@@ -511,6 +512,7 @@ void CCurlFile::Close()
   m_url.clear();
   m_referer.clear();
   m_cookie.clear();
+  m_uplinkAddress.clear();
 
   m_opened = false;
   m_forWrite = false;
@@ -731,6 +733,13 @@ void CCurlFile::SetCommonOptions(CReadState* state, bool failOnError /* = true *
   // Setup allowed TLS/SSL ciphers. New versions of cURL may deprecate things that are still in use.
   if (!m_cipherlist.empty())
     g_curlInterface.easy_setopt(h, CURLOPT_SSL_CIPHER_LIST, m_cipherlist.c_str());
+
+  if (!m_uplinkAddress.empty())
+  {
+    const std::string address = KODI::NETWORK::ResolveUplinkAddress(m_uplinkAddress);
+    if (!address.empty())
+      g_curlInterface.easy_setopt(h, CURLOPT_INTERFACE, address.c_str());
+  }
 
   if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_curlDisableHTTP2)
     g_curlInterface.easy_setopt(h, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
@@ -955,6 +964,8 @@ void CCurlFile::ParseAndCorrectUrl(CURL &url2)
           SetAcceptCharset(value);
         else if (name == "sslcipherlist")
           m_cipherlist = value;
+        else if (name == "local_addr" || name == "local-address")
+          m_uplinkAddress = value;
         else if (name == "connection-timeout")
           m_connecttimeout = strtol(value.c_str(), NULL, 10);
         else if (name == "failonerror")
@@ -1151,7 +1162,8 @@ bool CCurlFile::Open(const CURL& url)
     g_curlInterface.easy_acquire(url2.GetProtocol().c_str(),
                                 url2.GetHostName().c_str(),
                                 &m_state->m_easyHandle,
-                                &m_state->m_multiHandle);
+                                &m_state->m_multiHandle,
+                                m_uplinkAddress.c_str());
 
   // setup common curl options
   SetCommonOptions(m_state,
@@ -1265,7 +1277,8 @@ bool CCurlFile::OpenForWrite(const CURL& url, bool bOverWrite)
   g_curlInterface.easy_acquire(url2.GetProtocol().c_str(),
                               url2.GetHostName().c_str(),
                               &m_state->m_easyHandle,
-                              &m_state->m_multiHandle);
+                              &m_state->m_multiHandle,
+                              m_uplinkAddress.c_str());
 
   // setup common curl options
   SetCommonOptions(m_state);
@@ -1395,7 +1408,7 @@ bool CCurlFile::Exists(const CURL& url)
   assert(m_state->m_easyHandle == NULL);
   g_curlInterface.easy_acquire(url2.GetProtocol().c_str(),
                               url2.GetHostName().c_str(),
-                              &m_state->m_easyHandle, NULL);
+                              &m_state->m_easyHandle, NULL, m_uplinkAddress.c_str());
 
   SetCommonOptions(m_state);
   SetRequestHeaders(m_state);
@@ -1513,7 +1526,8 @@ int64_t CCurlFile::Seek(int64_t iFilePosition, int iWhence)
       g_curlInterface.easy_acquire(url.GetProtocol().c_str(),
                                   url.GetHostName().c_str(),
                                   &m_state->m_easyHandle,
-                                  &m_state->m_multiHandle );
+                                  &m_state->m_multiHandle,
+                                  m_uplinkAddress.c_str());
     }
     else
     {
@@ -1603,7 +1617,7 @@ int CCurlFile::Stat(const CURL& url, struct __stat64* buffer)
   assert(m_state->m_easyHandle == NULL);
   g_curlInterface.easy_acquire(url2.GetProtocol().c_str(),
                               url2.GetHostName().c_str(),
-                              &m_state->m_easyHandle, NULL);
+                              &m_state->m_easyHandle, NULL, m_uplinkAddress.c_str());
 
   SetCommonOptions(m_state);
   SetRequestHeaders(m_state);
