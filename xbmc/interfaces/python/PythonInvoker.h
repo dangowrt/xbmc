@@ -44,6 +44,7 @@ protected:
   virtual void onInitialization();
   // actually a PyObject* but don't wanna draw Python.h include into the header
   virtual void onPythonModuleInitialization(void* moduleDict);
+  void onUplinkInitialization(void* moduleDict);
   virtual void onDeinitialization();
 
   virtual void onSuccess() {}
