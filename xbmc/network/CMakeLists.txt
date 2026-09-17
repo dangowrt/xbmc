@@ -10,6 +10,7 @@ set(SOURCES DNSNameCache.cpp
             Socket.cpp
             TCPServer.cpp
             UdpClient.cpp
+            UplinkAddress.cpp
             WakeOnAccess.cpp
             ZeroconfBrowser.cpp
             Zeroconf.cpp)
@@ -26,6 +27,7 @@ set(HEADERS DNSNameCache.h
             Socket.h
             TCPServer.h
             UdpClient.h
+            UplinkAddress.h
             WakeOnAccess.h
             Zeroconf.h
             ZeroconfBrowser.h)
