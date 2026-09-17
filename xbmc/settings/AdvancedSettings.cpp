@@ -453,6 +453,7 @@ void CAdvancedSettings::Initialize()
   m_curlDisableIPV6 = false;      //Certain hardware/OS combinations have trouble
                                   //with ipv6.
   m_curlDisableHTTP2 = false;
+  m_addonUplinks.clear();
   m_webFilterLists.clear();
 
 #if defined(TARGET_WINDOWS_DESKTOP)
@@ -969,6 +970,30 @@ void CAdvancedSettings::ParseSettingsFile(const std::string &file)
     XMLUtils::GetString(pElement, "catrustfile", m_caTrustFile);
     XMLUtils::GetUInt(pElement, "nfstimeout", m_nfsTimeout, 0, 3600);
     XMLUtils::GetInt(pElement, "nfsretries", m_nfsRetries, -1, 30);
+
+    const TiXmlElement* pUplinks = pElement->FirstChildElement("addonuplinks");
+    if (pUplinks)
+    {
+      const std::string action = XMLUtils::GetAttribute(pUplinks, "action");
+      if (action != "append")
+        m_addonUplinks.clear();
+
+      const TiXmlElement* pUplink = pUplinks->FirstChildElement("addon");
+      while (pUplink)
+      {
+        AddonUplink uplink;
+        uplink.addonId = XMLUtils::GetAttribute(pUplink, "id");
+        uplink.localAddress = XMLUtils::GetAttribute(pUplink, "localaddress");
+
+        if (!uplink.addonId.empty() && !uplink.localAddress.empty())
+          m_addonUplinks.emplace_back(uplink);
+        else
+          CLog::Log(LOGWARNING, "Ignoring malformed addon uplink, both id and localaddress are "
+                                "required");
+
+        pUplink = pUplink->NextSiblingElement("addon");
+      }
+    }
   }
 
   pElement = pRootElement->FirstChildElement("webapps");
@@ -1373,6 +1398,17 @@ void CAdvancedSettings::Clear()
   m_discStubExtensions.clear();
 
   m_userAgent.clear();
+}
+
+std::string CAdvancedSettings::GetAddonUplink(const std::string& addonId) const
+{
+  for (const auto& uplink : m_addonUplinks)
+  {
+    if (uplink.addonId == addonId)
+      return uplink.localAddress;
+  }
+
+  return {};
 }
 
 void CAdvancedSettings::GetCustomTVRegexps(const TiXmlElement* pRootElement,
