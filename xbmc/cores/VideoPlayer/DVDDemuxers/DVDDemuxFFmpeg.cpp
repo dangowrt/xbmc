@@ -23,6 +23,7 @@
 #include "filesystem/CurlFile.h"
 #include "filesystem/Directory.h"
 #include "filesystem/File.h"
+#include "network/UplinkAddress.h"
 #include "settings/AdvancedSettings.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
@@ -847,12 +848,25 @@ AVDictionary* CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput()
       // set any of these ffmpeg options
       if (name == "seekable" || name == "reconnect" || name == "reconnect_at_eof" ||
           name == "reconnect_streamed" || name == "reconnect_delay_max" ||
-          name == "icy" || name == "icy_metadata_headers" || name == "icy_metadata_packet")
+          name == "icy" || name == "icy_metadata_headers" || name == "icy_metadata_packet" ||
+          name == "local_port")
       {
         CLog::Log(LOGDEBUG,
                   "CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput() adding ffmpeg option '{}: {}'",
                   it->first, value);
         av_dict_set(&options, name.c_str(), value.c_str(), 0);
+      }
+      else if (name == "local_addr" || name == "local-address")
+      {
+        const std::string address = KODI::NETWORK::ResolveUplinkAddress(value);
+        if (!address.empty())
+        {
+          CLog::Log(LOGDEBUG,
+                    "CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput() adding ffmpeg option "
+                    "'local_addr: {}'",
+                    address);
+          av_dict_set(&options, "local_addr", address.c_str(), 0);
+        }
       }
       // map some standard http headers to the ffmpeg related options
       else if (name == "user-agent")
