@@ -8592,7 +8592,12 @@ msgctxt "#14129"
 msgid "Wake a manually switched off display on input"
 msgstr ""
 
-#empty strings from id 14130 to 14186
+#: system/settings/settings.xml
+msgctxt "#14130"
+msgid "Pointer motion wakes the display"
+msgstr ""
+
+#empty strings from id 14131 to 14186
 
 #: system/settings/settings.xml
 msgctxt "#14187"
@@ -20820,8 +20825,6 @@ msgctxt "#36194"
 msgid "Let input wake a display that was switched off from the power menu. When disabled, only switching the display back on from the power menu wakes it."
 msgstr ""
 
-#empty strings from id 36195
-
 #. Description of setting with label #21372 "Forced DVD player region"
 #: system/settings/settings.xml
 msgctxt "#36195"
@@ -21294,7 +21297,10 @@ msgctxt "#36282"
 msgid "This category contains the settings for how CDs are handled."
 msgstr ""
 
-#empty strings from id 36283
+#. Description of setting with label #14130 "Pointer motion wakes the display"
+msgctxt "#36283"
+msgid "Let motion from a pointing device wake the display and end the screensaver. When disabled, a key press or a button is needed, and a pointing device that reports on its own, an air mouse carried across a room or a touchscreen registering a raindrop, leaves the display as it is. Pointing devices behave normally once the display is awake."
+msgstr ""
 
 #. Description of setting with label #227 "Load audio CD information from online service"
 #: system/settings/settings.xml
