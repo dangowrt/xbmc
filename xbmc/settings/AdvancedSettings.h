@@ -358,6 +358,7 @@ class CAdvancedSettings : public ISettingCallback, public ISettingsHandler
 
     std::string m_cpuTempCmd;
     std::string m_gpuTempCmd;
+    std::string m_cpuTempHwmon;
 
     /* Power management command overrides */
     std::string m_powerdownCommand;
