@@ -15,6 +15,7 @@
 #include "URL.h"
 #include "cores/IPlayerCallback.h"
 #include "cores/VideoPlayer/Interface/InputStreamConstants.h"
+#include "cores/WebPlayer/WebPlayerDefs.h"
 #include "dialogs/GUIDialogContextMenu.h"
 #include "music/MusicFileItemClassify.h"
 #include "profiles/ProfileManager.h"
@@ -381,6 +382,12 @@ bool CPlayerCoreFactory::LoadConfiguration(const std::string &file, bool clear)
     auto retroPlayer = std::make_unique<CPlayerCoreConfig>("RetroPlayer", "game", nullptr);
     retroPlayer->m_bPlaysGame = true;
     m_vecPlayerConfigs.emplace_back(std::move(retroPlayer));
+
+#if defined(HAVE_WAYLAND_SERVER)
+    auto webPlayer = std::make_unique<CPlayerCoreConfig>(KODI::WEB::PLAYER_NAME, "web", nullptr);
+    webPlayer->m_bPlaysVideo = true;
+    m_vecPlayerConfigs.emplace_back(std::move(webPlayer));
+#endif
   }
 
   if (StringUtils::CompareNoCase(pConfig->Value(), "playercorefactory") != 0)
