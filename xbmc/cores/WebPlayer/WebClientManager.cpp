@@ -10,17 +10,24 @@
 
 #include "FileItem.h"
 #include "FileItemList.h"
+#include "GUIDialogWebKeyboard.h"
 #include "ServiceBroker.h"
 #include "addons/Addon.h"
 #include "addons/AddonManager.h"
 #include "addons/addoninfo/AddonType.h"
+#include "application/ApplicationComponents.h"
 #include "filesystem/Directory.h"
 #include "filesystem/File.h"
 #include "filesystem/SpecialProtocol.h"
+#include "guilib/GUIComponent.h"
+#include "guilib/GUIWindowManager.h"
+#include "guilib/WindowIDs.h"
+#include "jobs/JobManager.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
 #include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
+#include "utils/Variant.h"
 #include "utils/log.h"
 #include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
@@ -37,6 +44,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <mutex>
 #include <utility>
 
@@ -52,6 +60,22 @@ namespace
 {
 
 constexpr const char* PROFILE_ROOT = "special://profile/webprofiles/";
+
+void OnWebKeyboardText(CGUIKeyboard*, const std::string& text)
+{
+  if (auto manager = CServiceBroker::GetAppComponents().GetComponent<CWebClientManager>())
+    manager->OnKeyboardText(text);
+}
+
+bool HasPhysicalKeyboard()
+{
+#if defined(HAVE_GBM)
+  if (auto* gbm =
+          dynamic_cast<KODI::WINDOWING::GBM::CWinSystemGbm*>(CServiceBroker::GetWinSystem()))
+    return gbm->HasKeyboard();
+#endif
+  return false;
+}
 
 std::string FirstRenderNode()
 {
@@ -498,4 +522,113 @@ void CWebClientManager::OnWebViewDestroyed(const std::string& profile)
   lock.unlock();
   if (observer)
     observer->OnWebViewGone(profile);
+}
+
+void CWebClientManager::OnTextInputEnabled(const TextInputState& state)
+{
+  std::unique_lock lock(m_lock);
+  m_textInputActive = true;
+  m_textInput = state;
+  // a typist with a real keyboard types into the page directly
+  if (m_keyboardOpen || HasPhysicalKeyboard())
+    return;
+  m_keyboardOpen = true;
+  m_keyboardText = state.surrounding;
+  m_replaceBefore = static_cast<uint32_t>(std::max<int32_t>(state.cursor, 0));
+  m_replaceAfter = static_cast<uint32_t>(
+      state.surrounding.size() > m_replaceBefore ? state.surrounding.size() - m_replaceBefore : 0);
+  m_coveredTop = std::numeric_limits<int32_t>::max();
+  m_scrolledCaretY = std::numeric_limits<int32_t>::min();
+  lock.unlock();
+
+  CServiceBroker::GetJobManager()->AddJob(
+      new CWebKeyboardJob(*this, state.surrounding, state.IsHidden()), nullptr);
+}
+
+void CWebClientManager::OnTextInputUpdated(const TextInputState& state)
+{
+  std::unique_lock lock(m_lock);
+  m_textInput = state;
+  lock.unlock();
+  EnsureCaretVisible();
+}
+
+void CWebClientManager::OnTextInputDisabled()
+{
+  std::unique_lock lock(m_lock);
+  m_textInputActive = false;
+  const bool open = m_keyboardOpen;
+  lock.unlock();
+  if (!open)
+    return;
+
+  auto* dialog = CServiceBroker::GetGUI()->GetWindowManager().GetWindow<CGUIDialogWebKeyboard>(
+      WINDOW_DIALOG_WEB_KEYBOARD);
+  if (dialog)
+    dialog->Close(false, 0, true, false);
+}
+
+void CWebClientManager::OnKeyboardOpening(int coveredTop)
+{
+  std::unique_lock lock(m_lock);
+  m_coveredTop = coveredTop;
+  lock.unlock();
+  EnsureCaretVisible();
+}
+
+void CWebClientManager::OnKeyboardText(const std::string& text)
+{
+  std::unique_lock lock(m_lock);
+  if (!m_keyboardOpen || text == m_keyboardText)
+    return;
+  const uint32_t before = m_replaceBefore;
+  const uint32_t after = m_replaceAfter;
+  m_keyboardText = text;
+  m_replaceBefore = static_cast<uint32_t>(text.size());
+  m_replaceAfter = 0;
+  lock.unlock();
+
+  if (m_host)
+    m_host->TextInputCommit(text, before, after);
+}
+
+void CWebClientManager::OnKeyboardDone()
+{
+  std::unique_lock lock(m_lock);
+  m_keyboardOpen = false;
+}
+
+void CWebClientManager::EnsureCaretVisible()
+{
+  std::unique_lock lock(m_lock);
+  if (!m_keyboardOpen || !m_textInputActive || m_textInput.caretHeight <= 0)
+    return;
+
+  // keep one caret height of the page visible above the keys; scroll once
+  // per caret position, as a page that cannot scroll reports the same one
+  const int32_t limit = m_coveredTop - m_textInput.caretHeight;
+  const int32_t caretBottom = m_textInput.caretY + m_textInput.caretHeight;
+  if (caretBottom <= limit || m_textInput.caretY == m_scrolledCaretY)
+    return;
+  m_scrolledCaretY = m_textInput.caretY;
+  const int32_t x = m_textInput.caretX;
+  const int32_t y = m_textInput.caretY;
+  lock.unlock();
+
+  if (m_host)
+    m_host->PointerScroll(x, y, caretBottom - limit);
+}
+
+bool CWebKeyboardJob::DoWork()
+{
+  auto* dialog = CServiceBroker::GetGUI()->GetWindowManager().GetWindow<CGUIDialogWebKeyboard>(
+      WINDOW_DIALOG_WEB_KEYBOARD);
+  if (dialog && dialog->Initialize())
+  {
+    m_manager.OnKeyboardOpening(dialog->GetCoveredTop());
+    std::string typed;
+    dialog->ShowAndGetInput(OnWebKeyboardText, m_text, typed, "", m_hidden);
+  }
+  m_manager.OnKeyboardDone();
+  return true;
 }
