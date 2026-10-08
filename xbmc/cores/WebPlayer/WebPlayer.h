@@ -1,0 +1,121 @@
+/*
+ *  Copyright (C) 2026 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
+ *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
+ */
+
+#pragma once
+
+#include "WebClientManager.h"
+#include "cores/IPlayer.h"
+#include "cores/VideoPlayer/DVDClock.h"
+#include "cores/VideoPlayer/VideoRenderers/RenderManager.h"
+#include "guilib/DispResource.h"
+
+#include <atomic>
+#include <memory>
+
+class CFileItem;
+class CProcessInfo;
+
+namespace KODI
+{
+namespace WEB
+{
+
+class CWebVideoBufferPool;
+
+/*!
+ * \brief Plays a web page: the view the client manager provides for the
+ * item's profile loads the URL, and the frames the client commits go
+ * through Kodi's video renderers, so the GUI composes over them like over
+ * any other video.
+ */
+class CWebPlayer : public IPlayer,
+                   public IRenderLoop,
+                   public IRenderMsg,
+                   public IWebViewObserver
+{
+public:
+  explicit CWebPlayer(IPlayerCallback& callback);
+  ~CWebPlayer() override;
+
+  // implementation of IPlayer
+  bool OpenFile(const CFileItem& file, const CPlayerOptions& options) override;
+  bool CloseFile(bool reopen = false) override;
+  bool IsPlaying() const override { return m_playing; }
+  bool CanPause() const override { return false; }
+  void Pause() override {}
+  bool HasVideo() const override { return true; }
+  bool HasAudio() const override { return false; }
+  bool CanSeek() const override { return false; }
+  void Seek(bool bPlus = true, bool bLargeStep = false, bool bChapterOverride = false) override {}
+  void SetSpeed(float speed) override {}
+  void Render(bool clear, uint32_t alpha = 255, bool gui = true) override;
+  void FlushRenderer() override;
+  void SetRenderViewMode(int mode, float zoom, float par, float shift, bool stretch) override;
+  float GetRenderAspectRatio() const override;
+  void TriggerUpdateResolution() override;
+  bool IsRenderingVideo() const override;
+  void GetRects(CRect& source, CRect& dest, CRect& view) const override;
+  unsigned int GetOrientation() const override;
+  bool Supports(ERENDERFEATURE feature) const override;
+  bool Supports(ESCALINGMETHOD method) const override;
+  CVideoSettings GetVideoSettings() const override;
+  void SetVideoSettings(CVideoSettings& settings) override;
+
+  // implementation of IRenderLoop
+  void FrameMove() override;
+
+  // implementation of IWebViewObserver
+  void OnWebViewAvailable(const std::string& profile,
+                          WAYLANDHOST::CWaylandSurface& surface) override;
+  void OnWebViewUnavailable(const std::string& profile, const std::string& message) override;
+  void OnWebViewGone(const std::string& profile) override;
+  void OnWebViewFrame(WAYLANDHOST::CWaylandSurface& surface,
+                      std::shared_ptr<WAYLANDHOST::CWaylandBuffer> buffer) override;
+  void OnWebViewUnmapped(WAYLANDHOST::CWaylandSurface& surface) override;
+  void OnWebViewUrl(const std::string& profile, const std::string& url) override;
+  void OnWebViewTitle(const std::string& profile, const std::string& title) override;
+  void OnWebViewProgress(const std::string& profile, uint32_t percent) override;
+  void OnWebViewNavigationState(const std::string& profile,
+                                bool canGoBack,
+                                bool canGoForward) override;
+  void OnWebViewError(const std::string& profile,
+                      uint32_t code,
+                      const std::string& message) override;
+
+protected:
+  // implementation of IRenderMsg
+  void VideoParamsChange() override {}
+  void GetDebugInfo(std::string& audio, std::string& video, std::string& general) override;
+  void UpdateClockSync(bool enabled) override;
+  void UpdateRenderInfo(CRenderInfo& info) override;
+  void UpdateRenderBuffers(int queued, int discard, int free) override;
+  void UpdateGuiRender(bool gui) override;
+  void UpdateVideoRender(bool video) override;
+
+private:
+  bool ConfigureRenderer(const VideoPicture& picture);
+  void StopFromClient();
+
+  std::unique_ptr<CProcessInfo> m_processInfo;
+  CDVDClock m_clock;
+  CRenderManager m_renderManager;
+  std::shared_ptr<CWebClientManager> m_manager;
+  std::string m_profile;
+  std::string m_url;
+  std::atomic<WAYLANDHOST::CWaylandSurface*> m_surface{nullptr};
+  std::shared_ptr<CWebVideoBufferPool> m_pool;
+  std::unique_ptr<CFileItem> m_item;
+  CPlayerOptions m_options;
+  std::atomic<bool> m_playing{false};
+  volatile std::atomic_bool m_stop{false};
+  bool m_configured{false};
+  float m_fps{0.0f};
+};
+
+} // namespace WEB
+} // namespace KODI

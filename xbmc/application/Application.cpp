@@ -46,9 +46,13 @@
 #include "application/ApplicationPowerHandling.h"
 #include "application/ApplicationSkinHandling.h"
 #include "application/ApplicationStackHelper.h"
+#if defined(HAVE_WAYLAND_SERVER)
+#include "cores/WebPlayer/WebClientManager.h"
+#endif
 #include "application/ApplicationVolumeHandling.h"
 #include "cores/AudioEngine/Engines/ActiveAE/ActiveAE.h"
 #include "cores/FFmpeg.h"
+#include "cores/WebPlayer/WebPlayerDefs.h"
 #include "cores/playercorefactory/PlayerCoreFactory.h"
 #include "dialogs/GUIDialogBusy.h"
 #include "dialogs/GUIDialogCache.h"
@@ -238,6 +242,9 @@ CApplication::CApplication(void)
   RegisterComponent(std::make_shared<CApplicationSkinHandling>(this, this, m_bInitializing));
   RegisterComponent(std::make_shared<CApplicationVolumeHandling>());
   RegisterComponent(std::make_shared<CApplicationStackHelper>());
+#if defined(HAVE_WAYLAND_SERVER)
+  RegisterComponent(std::make_shared<KODI::WEB::CWebClientManager>());
+#endif
 }
 
 CApplication::~CApplication(void)
@@ -788,6 +795,10 @@ bool CApplication::Initialize()
       // the startup window is considered part of the initialization as it most likely switches to the final window
       uiInitializationFinished = firstWindow != WINDOW_STARTUP_ANIM;
     }
+
+#if defined(HAVE_WAYLAND_SERVER)
+    GetComponent<KODI::WEB::CWebClientManager>()->Start();
+#endif
   }
 
   g_sysinfo.Refresh();
@@ -1703,6 +1714,10 @@ bool CApplication::Cleanup()
     ResetCurrentItem();
     StopPlaying();
 
+#if defined(HAVE_WAYLAND_SERVER)
+    GetComponent<KODI::WEB::CWebClientManager>()->Stop();
+#endif
+
     if (m_ServiceManager)
       m_ServiceManager->DeinitStageThree();
 
@@ -2010,7 +2025,8 @@ bool CApplication::PlayMedia(CFileItem& item, const std::string& player, PLAYLIS
       return ProcessAndStartPlaylist(smartpl.GetName(), playlist, smartplPlaylistId);
     }
   }
-  else if ((PLAYLIST::IsPlayList(item) && !item.IsGame()) || NETWORK::IsInternetStream(item))
+  else if (player != KODI::WEB::PLAYER_NAME &&
+           ((PLAYLIST::IsPlayList(item) && !item.IsGame()) || NETWORK::IsInternetStream(item)))
   {
     // Not owner. Dialog auto-deletes itself.
     CGUIDialogCache* dlgCache = new CGUIDialogCache(
