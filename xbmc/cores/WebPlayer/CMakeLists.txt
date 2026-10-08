@@ -1,10 +1,12 @@
 if(TARGET ${APP_NAME_LC}::WaylandServer)
-  set(SOURCES GUIWindowFullScreenWeb.cpp
+  set(SOURCES GUIDialogWebKeyboard.cpp
+              GUIWindowFullScreenWeb.cpp
               WebClientManager.cpp
               WebPlayer.cpp
               WebVideoBuffer.cpp)
 
-  set(HEADERS GUIWindowFullScreenWeb.h
+  set(HEADERS GUIDialogWebKeyboard.h
+              GUIWindowFullScreenWeb.h
               WebClientManager.h
               WebPlayer.h
               WebPlayerDefs.h

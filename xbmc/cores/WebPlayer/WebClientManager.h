@@ -10,6 +10,7 @@
 
 #include "application/IApplicationComponent.h"
 #include "guilib/DispResource.h"
+#include "jobs/Job.h"
 #include "threads/CriticalSection.h"
 
 #include "platform/linux/waylandhost/WaylandHost.h"
@@ -111,6 +112,14 @@ public:
                       uint32_t code,
                       const std::string& message) override;
   void OnWebViewDestroyed(const std::string& profile) override;
+  void OnTextInputEnabled(const WAYLANDHOST::TextInputState& state) override;
+  void OnTextInputUpdated(const WAYLANDHOST::TextInputState& state) override;
+  void OnTextInputDisabled() override;
+
+  // the keyboard dialog's life, off the host thread
+  void OnKeyboardOpening(int coveredTop);
+  void OnKeyboardText(const std::string& text);
+  void OnKeyboardDone();
 
 private:
   bool StartHost();
@@ -123,6 +132,7 @@ private:
                         bool scripts);
   void SendProfileFile(const std::string& profile, const std::string& file, bool script);
   IWebViewObserver* ObserverOf(const std::string& profile);
+  void EnsureCaretVisible();
 
   std::unique_ptr<WAYLANDHOST::CWaylandHost> m_host;
   mutable CCriticalSection m_lock;
@@ -133,6 +143,37 @@ private:
   bool m_wantPending{false};
   std::map<std::string, WAYLANDHOST::CWaylandSurface*> m_views;
   std::map<WAYLANDHOST::CWaylandSurface*, std::string> m_surfaces;
+  bool m_keyboardOpen{false};
+  bool m_textInputActive{false};
+  WAYLANDHOST::TextInputState m_textInput;
+  std::string m_keyboardText;
+  uint32_t m_replaceBefore{0};
+  uint32_t m_replaceAfter{0};
+  int32_t m_coveredTop{0};
+  int32_t m_scrolledCaretY{0};
+};
+
+/*!
+ * \brief Shows Kodi's keyboard dialog for a page's text input on a job
+ * thread, so neither the host nor the GUI thread waits on it
+ */
+class CWebKeyboardJob : public CJob
+{
+public:
+  CWebKeyboardJob(CWebClientManager& manager, std::string text, bool hidden)
+    : m_manager(manager),
+      m_text(std::move(text)),
+      m_hidden(hidden)
+  {
+  }
+
+  bool DoWork() override;
+  const char* GetType() const override { return "webkeyboard"; }
+
+private:
+  CWebClientManager& m_manager;
+  std::string m_text;
+  const bool m_hidden;
 };
 
 } // namespace WEB
