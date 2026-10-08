@@ -1,0 +1,215 @@
+/*
+ *  Copyright (C) 2026 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
+ *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
+ */
+
+#pragma once
+
+#include "threads/CriticalSection.h"
+#include "threads/Thread.h"
+
+#include <cstdint>
+#include <ctime>
+#include <functional>
+#include <list>
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <sys/types.h>
+
+struct wl_client;
+struct wl_display;
+struct wl_event_loop;
+struct wl_event_source;
+struct wl_global;
+struct wl_resource;
+struct xkb_context;
+struct xkb_keymap;
+struct xkb_state;
+
+namespace KODI
+{
+namespace WAYLANDHOST
+{
+
+class CWaylandBuffer;
+class CWaylandSurface;
+
+/*!
+ * \brief Receives what the clients do. All methods run on the host thread.
+ */
+class IWaylandHostObserver
+{
+public:
+  virtual ~IWaylandHostObserver() = default;
+
+  virtual void OnSurfaceMapped(CWaylandSurface& surface) = 0;
+  virtual void OnSurfaceUnmapped(CWaylandSurface& surface) = 0;
+
+  /*!
+   * \brief The surface shows new content; the buffer is locked for the
+   * observer, which unlocks it when it no longer needs the pixels
+   */
+  virtual void OnSurfaceFrame(CWaylandSurface& surface, std::shared_ptr<CWaylandBuffer> buffer) = 0;
+
+  virtual void OnClientExited(pid_t pid, int status) = 0;
+};
+
+struct WaylandHostConfig
+{
+  int32_t width{0};
+  int32_t height{0};
+  int32_t refreshMilliHz{0};
+  std::string renderDevicePath;
+  std::string keyboardLayout;
+};
+
+/*!
+ * \brief A Wayland compositor without a screen of its own: clients connect
+ * through socket pairs handed to processes the host spawns, their buffers
+ * are passed to the observer, and input comes from Kodi.
+ */
+class CWaylandHost : private CThread
+{
+public:
+  CWaylandHost(IWaylandHostObserver& observer, WaylandHostConfig config);
+  ~CWaylandHost() override;
+
+  bool Start();
+  void Stop();
+
+  /*!
+   * \brief Run a function on the host thread; any thread
+   */
+  void Post(std::function<void()> task);
+
+  /*!
+   * \brief Start a client process connected to this host; any thread
+   */
+  void SpawnClient(std::vector<std::string> argv, std::map<std::string, std::string> env);
+
+  /*!
+   * \brief Ask every client process to terminate; any thread
+   */
+  void TerminateClients();
+
+  // input injection; any thread
+  void KeyboardKey(uint32_t evdevCode, bool pressed);
+  void PointerMotion(int32_t x, int32_t y);
+  void PointerButton(uint32_t evdevButton, bool pressed);
+  void PointerAxis(int32_t value120);
+
+  /*!
+   * \brief A display refresh has passed; any thread
+   */
+  void FrameDone();
+
+  // host thread only
+  wl_display* GetDisplay() const { return m_display; }
+  const WaylandHostConfig& GetConfig() const { return m_config; }
+  uint32_t NextSerial();
+  void OnSurfaceCreated(CWaylandSurface* surface);
+  void OnSurfaceDestroyed(CWaylandSurface* surface);
+  void OnSurfaceMapped(CWaylandSurface& surface);
+  void OnSurfaceUnmapped(CWaylandSurface& surface);
+  void OnSurfaceFrame(CWaylandSurface& surface, std::shared_ptr<CWaylandBuffer> buffer);
+  void SendDmabufFeedback(wl_resource* feedback);
+  void AddKeyboard(wl_client* client, uint32_t version, uint32_t id);
+  void RemoveKeyboard(wl_resource* keyboard);
+  void AddPointer(wl_client* client, uint32_t version, uint32_t id);
+  void RemovePointer(wl_resource* pointer);
+
+protected:
+  void Process() override;
+
+private:
+  struct Client
+  {
+    CWaylandHost* host{nullptr};
+    pid_t pid{-1};
+    int pidfd{-1};
+    wl_client* client{nullptr};
+    wl_event_source* exitSource{nullptr};
+  };
+
+  bool CreateGlobals();
+  bool CreateKeymap();
+  bool CreateFormatTable();
+  static int SealedMemfd(const char* name, const void* data, size_t size);
+  void DestroyAll();
+  void RunTasks();
+  void DoSpawnClient(const std::vector<std::string>& argv,
+                     const std::map<std::string, std::string>& env);
+  void DoTerminateClients();
+  void DoKeyboardKey(uint32_t evdevCode, bool pressed);
+  void DoPointerMotion(int32_t x, int32_t y);
+  void DoPointerButton(uint32_t evdevButton, bool pressed);
+  void DoPointerAxis(int32_t value120);
+  void DoFrameDone();
+  void SetKeyboardFocus(CWaylandSurface* surface);
+  void SendKeyboardEnter(CWaylandSurface& surface);
+  void SendKeyboardEnterTo(wl_resource* keyboard, CWaylandSurface& surface);
+  void SendKeyboardLeave(CWaylandSurface& surface);
+  void SendPointerEnter(CWaylandSurface& surface);
+  void SendPointerEnterTo(wl_resource* pointer, CWaylandSurface& surface);
+  void SendPointerLeave();
+  void SendModifiers();
+  void OnClientExit(Client& client);
+
+  static int OnWake(int fd, uint32_t mask, void* data);
+  static int OnClientExitStatic(int fd, uint32_t mask, void* data);
+
+  // globals
+  static void BindCompositor(wl_client* client, void* data, uint32_t version, uint32_t id);
+  static void BindOutput(wl_client* client, void* data, uint32_t version, uint32_t id);
+  static void BindSeat(wl_client* client, void* data, uint32_t version, uint32_t id);
+  static void BindXdgWmBase(wl_client* client, void* data, uint32_t version, uint32_t id);
+  static void BindLinuxDmabuf(wl_client* client, void* data, uint32_t version, uint32_t id);
+  static void BindPresentation(wl_client* client, void* data, uint32_t version, uint32_t id);
+  static void BindTextInputManager(wl_client* client, void* data, uint32_t version, uint32_t id);
+
+  IWaylandHostObserver& m_observer;
+  const WaylandHostConfig m_config;
+
+  wl_display* m_display{nullptr};
+  wl_event_loop* m_loop{nullptr};
+  int m_wakeFd{-1};
+  wl_event_source* m_wakeSource{nullptr};
+  std::vector<wl_global*> m_globals;
+
+  CCriticalSection m_taskLock;
+  std::list<std::function<void()>> m_tasks;
+
+  std::list<Client> m_clients;
+  std::list<CWaylandSurface*> m_surfaces;
+  std::list<wl_resource*> m_keyboards;
+  std::list<wl_resource*> m_pointers;
+  CWaylandSurface* m_keyboardFocus{nullptr};
+  CWaylandSurface* m_pointerFocus{nullptr};
+  int32_t m_pointerX{0};
+  int32_t m_pointerY{0};
+
+  xkb_context* m_xkbContext{nullptr};
+  xkb_keymap* m_xkbKeymap{nullptr};
+  xkb_state* m_xkbState{nullptr};
+  int m_keymapFd{-1};
+  size_t m_keymapSize{0};
+  uint32_t m_modsDepressed{0};
+  uint32_t m_modsLatched{0};
+  uint32_t m_modsLocked{0};
+  uint32_t m_modsGroup{0};
+
+  int m_formatTableFd{-1};
+  size_t m_formatTableSize{0};
+  dev_t m_renderDevice{0};
+
+  uint32_t m_serial{0};
+};
+
+} // namespace WAYLANDHOST
+} // namespace KODI

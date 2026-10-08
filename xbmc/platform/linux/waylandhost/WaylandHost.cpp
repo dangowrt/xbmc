@@ -1,0 +1,1453 @@
+/*
+ *  Copyright (C) 2026 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
+ *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
+ */
+
+#include "WaylandHost.h"
+
+#include "WaylandBuffer.h"
+#include "WaylandSurface.h"
+#include "utils/log.h"
+
+#include <algorithm>
+#include <cerrno>
+#include <cstring>
+#include <mutex>
+#include <signal.h>
+
+#include <drm_fourcc.h>
+#include <fcntl.h>
+#include <linux-dmabuf-v1-server-protocol.h>
+#include <presentation-time-server-protocol.h>
+#include <sys/eventfd.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
+#include <text-input-unstable-v3-server-protocol.h>
+#include <unistd.h>
+#include <wayland-server-core.h>
+#include <wayland-server-protocol.h>
+#include <xdg-shell-server-protocol.h>
+#include <xkbcommon/xkbcommon.h>
+
+extern char** environ;
+
+using namespace KODI::WAYLANDHOST;
+
+namespace
+{
+
+constexpr uint32_t COMPOSITOR_VERSION = 5;
+constexpr uint32_t OUTPUT_VERSION = 2;
+constexpr uint32_t SEAT_VERSION = 7;
+constexpr uint32_t XDG_WM_BASE_VERSION = 1;
+constexpr uint32_t LINUX_DMABUF_VERSION = 4;
+constexpr uint32_t PRESENTATION_VERSION = 1;
+constexpr uint32_t TEXT_INPUT_VERSION = 1;
+
+// evdev key codes map to xkb key codes with this offset (xkbcommon convention)
+constexpr uint32_t XKB_KEYCODE_OFFSET = 8;
+
+// one wheel click is 120 in axis_value120 units and 15 on the wl_pointer axis
+// (the libinput convention every compositor follows)
+constexpr int32_t AXIS_UNITS_PER_VALUE120 = 8;
+
+constexpr uint32_t DMABUF_FORMATS[] = {DRM_FORMAT_ARGB8888, DRM_FORMAT_XRGB8888,
+                                       DRM_FORMAT_ABGR8888, DRM_FORMAT_XBGR8888};
+
+struct FormatTableEntry
+{
+  uint32_t format;
+  uint32_t padding;
+  uint64_t modifier;
+};
+
+timespec Now()
+{
+  timespec now{};
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return now;
+}
+
+uint32_t Milliseconds(const timespec& now)
+{
+  return static_cast<uint32_t>(now.tv_sec * 1000 + now.tv_nsec / 1000000);
+}
+
+CWaylandHost& HostOf(wl_resource* resource)
+{
+  return *static_cast<CWaylandHost*>(wl_resource_get_user_data(resource));
+}
+
+CWaylandSurface* SurfaceOf(wl_resource* resource)
+{
+  return static_cast<CWaylandSurface*>(wl_resource_get_user_data(resource));
+}
+
+void DestroyResource(wl_client*, wl_resource* resource)
+{
+  wl_resource_destroy(resource);
+}
+
+void Ignore(wl_client*, wl_resource*)
+{
+}
+
+void Ignore(wl_client*, wl_resource*, uint32_t)
+{
+}
+
+void Ignore(wl_client*, wl_resource*, int32_t)
+{
+}
+
+void Ignore(wl_client*, wl_resource*, int32_t, int32_t)
+{
+}
+
+void Ignore(wl_client*, wl_resource*, uint32_t, uint32_t)
+{
+}
+
+void Ignore(wl_client*, wl_resource*, wl_resource*)
+{
+}
+
+void Ignore(wl_client*, wl_resource*, const char*)
+{
+}
+
+void Ignore(wl_client*, wl_resource*, const char*, int32_t, int32_t)
+{
+}
+
+void Ignore(wl_client*, wl_resource*, int32_t, int32_t, int32_t, int32_t)
+{
+}
+
+void Ignore(wl_client*, wl_resource*, wl_resource*, uint32_t)
+{
+}
+
+void Ignore(wl_client*, wl_resource*, wl_resource*, uint32_t, uint32_t)
+{
+}
+
+void Ignore(wl_client*, wl_resource*, wl_resource*, uint32_t, int32_t, int32_t)
+{
+}
+
+void Ignore(wl_client*, wl_resource*, uint32_t, wl_resource*, int32_t, int32_t)
+{
+}
+
+void Ignore(wl_client*, wl_resource*, wl_array*)
+{
+}
+
+// wl_surface
+
+void SurfaceAttach(wl_client*, wl_resource* resource, wl_resource* buffer, int32_t, int32_t)
+{
+  if (auto* surface = SurfaceOf(resource))
+    surface->Attach(buffer);
+}
+
+void SurfaceFrame(wl_client* client, wl_resource* resource, uint32_t id)
+{
+  wl_resource* callback = wl_resource_create(client, &wl_callback_interface, 1, id);
+  if (!callback)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  if (auto* surface = SurfaceOf(resource))
+    surface->Frame(callback);
+  else
+    wl_resource_destroy(callback);
+}
+
+void SurfaceCommit(wl_client*, wl_resource* resource)
+{
+  if (auto* surface = SurfaceOf(resource))
+    surface->Commit();
+}
+
+const struct wl_surface_interface SURFACE_IMPL = {
+    DestroyResource, SurfaceAttach, Ignore, SurfaceFrame, Ignore, Ignore,
+    SurfaceCommit,   Ignore,        Ignore, Ignore,       Ignore, Ignore,
+};
+
+void SurfaceResourceDestroyed(wl_resource* resource)
+{
+  auto* surface = SurfaceOf(resource);
+  if (!surface)
+    return;
+
+  surface->OnResourceDestroyed();
+  delete surface;
+}
+
+const struct wl_region_interface REGION_IMPL = {
+    DestroyResource,
+    Ignore,
+    Ignore,
+};
+
+// wl_compositor
+
+void CompositorCreateSurface(wl_client* client, wl_resource* resource, uint32_t id)
+{
+  wl_resource* surfaceResource =
+      wl_resource_create(client, &wl_surface_interface, wl_resource_get_version(resource), id);
+  if (!surfaceResource)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  auto* surface = new CWaylandSurface(HostOf(resource), surfaceResource);
+  wl_resource_set_implementation(surfaceResource, &SURFACE_IMPL, surface, SurfaceResourceDestroyed);
+}
+
+void CompositorCreateRegion(wl_client* client, wl_resource* resource, uint32_t id)
+{
+  wl_resource* region =
+      wl_resource_create(client, &wl_region_interface, wl_resource_get_version(resource), id);
+  if (!region)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  wl_resource_set_implementation(region, &REGION_IMPL, nullptr, nullptr);
+}
+
+const struct wl_compositor_interface COMPOSITOR_IMPL = {
+    CompositorCreateSurface,
+    CompositorCreateRegion,
+    Ignore,
+};
+
+// xdg_wm_base
+
+const struct xdg_positioner_interface POSITIONER_IMPL = {
+    DestroyResource, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore,
+};
+
+void ToplevelSetTitle(wl_client*, wl_resource* resource, const char* title)
+{
+  if (auto* surface = SurfaceOf(resource))
+    surface->SetTitle(title ? title : "");
+}
+
+const struct xdg_toplevel_interface TOPLEVEL_IMPL = {
+    DestroyResource, Ignore, ToplevelSetTitle, Ignore, Ignore, Ignore, Ignore,
+    Ignore,          Ignore, Ignore,           Ignore, Ignore, Ignore, Ignore,
+};
+
+void ToplevelResourceDestroyed(wl_resource* resource)
+{
+  if (auto* surface = SurfaceOf(resource))
+    surface->SetXdgToplevel(nullptr);
+}
+
+void XdgSurfaceGetToplevel(wl_client* client, wl_resource* resource, uint32_t id)
+{
+  auto* surface = SurfaceOf(resource);
+  wl_resource* toplevel =
+      wl_resource_create(client, &xdg_toplevel_interface, wl_resource_get_version(resource), id);
+  if (!toplevel)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  wl_resource_set_implementation(toplevel, &TOPLEVEL_IMPL, surface, ToplevelResourceDestroyed);
+  if (surface)
+    surface->SetXdgToplevel(toplevel);
+}
+
+void XdgSurfaceGetPopup(wl_client*, wl_resource* resource, uint32_t, wl_resource*, wl_resource*)
+{
+  wl_resource_post_error(resource, XDG_WM_BASE_ERROR_ROLE, "popups are not supported");
+}
+
+void XdgSurfaceAckConfigure(wl_client*, wl_resource* resource, uint32_t serial)
+{
+  if (auto* surface = SurfaceOf(resource))
+    surface->AckConfigure(serial);
+}
+
+const struct xdg_surface_interface XDG_SURFACE_IMPL = {
+    DestroyResource, XdgSurfaceGetToplevel, XdgSurfaceGetPopup, Ignore, XdgSurfaceAckConfigure,
+};
+
+void XdgSurfaceResourceDestroyed(wl_resource* resource)
+{
+  if (auto* surface = SurfaceOf(resource))
+    surface->SetXdgSurface(nullptr);
+}
+
+void WmBaseCreatePositioner(wl_client* client, wl_resource* resource, uint32_t id)
+{
+  wl_resource* positioner =
+      wl_resource_create(client, &xdg_positioner_interface, wl_resource_get_version(resource), id);
+  if (!positioner)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  wl_resource_set_implementation(positioner, &POSITIONER_IMPL, nullptr, nullptr);
+}
+
+void WmBaseGetXdgSurface(wl_client* client,
+                         wl_resource* resource,
+                         uint32_t id,
+                         wl_resource* surfaceResource)
+{
+  auto* surface = SurfaceOf(surfaceResource);
+  wl_resource* xdgSurface =
+      wl_resource_create(client, &xdg_surface_interface, wl_resource_get_version(resource), id);
+  if (!xdgSurface)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  wl_resource_set_implementation(xdgSurface, &XDG_SURFACE_IMPL, surface,
+                                 XdgSurfaceResourceDestroyed);
+  if (surface)
+    surface->SetXdgSurface(xdgSurface);
+}
+
+const struct xdg_wm_base_interface WM_BASE_IMPL = {
+    DestroyResource,
+    WmBaseCreatePositioner,
+    WmBaseGetXdgSurface,
+    Ignore,
+};
+
+// zwp_linux_dmabuf_v1
+
+struct BufferParams
+{
+  CWaylandHost* host{nullptr};
+  std::array<DmaBufPlane, CWaylandBuffer::MAX_PLANES> planes;
+  uint64_t modifier{DRM_FORMAT_MOD_INVALID};
+  unsigned int planeCount{0};
+  bool used{false};
+};
+
+void BufferResourceDestroyed(wl_resource* resource)
+{
+  auto* holder = static_cast<std::shared_ptr<CWaylandBuffer>*>(wl_resource_get_user_data(resource));
+  if (!holder)
+    return;
+
+  (*holder)->SetResource(nullptr);
+  delete holder;
+}
+
+const struct wl_buffer_interface BUFFER_IMPL = {
+    DestroyResource,
+};
+
+void ParamsAdd(wl_client*,
+               wl_resource* resource,
+               int32_t fd,
+               uint32_t planeIdx,
+               uint32_t offset,
+               uint32_t stride,
+               uint32_t modifierHi,
+               uint32_t modifierLo)
+{
+  auto* params = static_cast<BufferParams*>(wl_resource_get_user_data(resource));
+  if (params->used)
+  {
+    close(fd);
+    wl_resource_post_error(resource, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_ALREADY_USED,
+                           "params were already used to create a wl_buffer");
+    return;
+  }
+  if (planeIdx >= CWaylandBuffer::MAX_PLANES)
+  {
+    close(fd);
+    wl_resource_post_error(resource, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_PLANE_IDX,
+                           "plane index %u is too large", planeIdx);
+    return;
+  }
+  if (params->planes[planeIdx].fd >= 0)
+  {
+    close(fd);
+    wl_resource_post_error(resource, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_PLANE_SET,
+                           "plane %u was already set", planeIdx);
+    return;
+  }
+
+  params->planes[planeIdx] = {fd, offset, stride};
+  params->modifier = (static_cast<uint64_t>(modifierHi) << 32) | modifierLo;
+  if (planeIdx >= params->planeCount)
+    params->planeCount = planeIdx + 1;
+}
+
+bool FormatSupported(uint32_t format)
+{
+  return std::find(std::begin(DMABUF_FORMATS), std::end(DMABUF_FORMATS), format) !=
+         std::end(DMABUF_FORMATS);
+}
+
+wl_resource* ParamsCreateBuffer(wl_client* client,
+                                wl_resource* resource,
+                                uint32_t bufferId,
+                                int32_t width,
+                                int32_t height,
+                                uint32_t format,
+                                uint32_t flags)
+{
+  auto* params = static_cast<BufferParams*>(wl_resource_get_user_data(resource));
+  if (params->used)
+  {
+    wl_resource_post_error(resource, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_ALREADY_USED,
+                           "params were already used to create a wl_buffer");
+    return nullptr;
+  }
+  params->used = true;
+
+  for (unsigned int i = 0; i < params->planeCount; ++i)
+  {
+    if (params->planes[i].fd < 0)
+    {
+      wl_resource_post_error(resource, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_INCOMPLETE,
+                             "plane %u is missing", i);
+      return nullptr;
+    }
+  }
+  if (params->planeCount == 0)
+  {
+    wl_resource_post_error(resource, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_INCOMPLETE,
+                           "no planes were added");
+    return nullptr;
+  }
+  if (width <= 0 || height <= 0)
+  {
+    wl_resource_post_error(resource, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_INVALID_DIMENSIONS,
+                           "invalid buffer size %dx%d", width, height);
+    return nullptr;
+  }
+  if (!FormatSupported(format) || flags != 0)
+  {
+    zwp_linux_buffer_params_v1_send_failed(resource);
+    return nullptr;
+  }
+
+  wl_resource* buffer = wl_resource_create(client, &wl_buffer_interface, 1, bufferId);
+  if (!buffer)
+  {
+    wl_client_post_no_memory(client);
+    return nullptr;
+  }
+
+  auto* holder = new std::shared_ptr<CWaylandBuffer>(std::make_shared<CWaylandBuffer>(
+      *params->host, width, height, format, params->modifier, params->planes, params->planeCount));
+  for (auto& plane : params->planes)
+    plane.fd = -1;
+  (*holder)->SetResource(buffer);
+  wl_resource_set_implementation(buffer, &BUFFER_IMPL, holder, BufferResourceDestroyed);
+  return buffer;
+}
+
+void ParamsCreate(wl_client* client,
+                  wl_resource* resource,
+                  int32_t width,
+                  int32_t height,
+                  uint32_t format,
+                  uint32_t flags)
+{
+  wl_resource* buffer = ParamsCreateBuffer(client, resource, 0, width, height, format, flags);
+  if (buffer)
+    zwp_linux_buffer_params_v1_send_created(resource, buffer);
+}
+
+void ParamsCreateImmed(wl_client* client,
+                       wl_resource* resource,
+                       uint32_t bufferId,
+                       int32_t width,
+                       int32_t height,
+                       uint32_t format,
+                       uint32_t flags)
+{
+  ParamsCreateBuffer(client, resource, bufferId, width, height, format, flags);
+}
+
+const struct zwp_linux_buffer_params_v1_interface PARAMS_IMPL = {
+    DestroyResource, ParamsAdd, ParamsCreate, ParamsCreateImmed, Ignore,
+};
+
+void ParamsResourceDestroyed(wl_resource* resource)
+{
+  auto* params = static_cast<BufferParams*>(wl_resource_get_user_data(resource));
+  for (auto& plane : params->planes)
+  {
+    if (plane.fd >= 0)
+      close(plane.fd);
+  }
+  delete params;
+}
+
+void DmabufCreateParams(wl_client* client, wl_resource* resource, uint32_t id)
+{
+  wl_resource* params = wl_resource_create(client, &zwp_linux_buffer_params_v1_interface,
+                                           wl_resource_get_version(resource), id);
+  if (!params)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  auto* state = new BufferParams;
+  state->host = &HostOf(resource);
+  wl_resource_set_implementation(params, &PARAMS_IMPL, state, ParamsResourceDestroyed);
+}
+
+const struct zwp_linux_dmabuf_feedback_v1_interface FEEDBACK_IMPL = {
+    DestroyResource,
+};
+
+void DmabufGetFeedback(wl_client* client, wl_resource* resource, uint32_t id, wl_resource*)
+{
+  wl_resource* feedback = wl_resource_create(client, &zwp_linux_dmabuf_feedback_v1_interface,
+                                             wl_resource_get_version(resource), id);
+  if (!feedback)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  wl_resource_set_implementation(feedback, &FEEDBACK_IMPL, nullptr, nullptr);
+  HostOf(resource).SendDmabufFeedback(feedback);
+}
+
+void DmabufGetDefaultFeedback(wl_client* client, wl_resource* resource, uint32_t id)
+{
+  DmabufGetFeedback(client, resource, id, nullptr);
+}
+
+const struct zwp_linux_dmabuf_v1_interface DMABUF_IMPL = {
+    DestroyResource,
+    DmabufCreateParams,
+    DmabufGetDefaultFeedback,
+    DmabufGetFeedback,
+};
+
+// wl_seat
+
+const struct wl_pointer_interface POINTER_IMPL = {
+    Ignore,
+    DestroyResource,
+};
+
+const struct wl_keyboard_interface KEYBOARD_IMPL = {
+    DestroyResource,
+};
+
+const struct wl_touch_interface TOUCH_IMPL = {
+    DestroyResource,
+};
+
+void PointerResourceDestroyed(wl_resource* resource)
+{
+  HostOf(resource).RemovePointer(resource);
+}
+
+void KeyboardResourceDestroyed(wl_resource* resource)
+{
+  HostOf(resource).RemoveKeyboard(resource);
+}
+
+void SeatGetPointer(wl_client* client, wl_resource* resource, uint32_t id)
+{
+  HostOf(resource).AddPointer(client, wl_resource_get_version(resource), id);
+}
+
+void SeatGetKeyboard(wl_client* client, wl_resource* resource, uint32_t id)
+{
+  HostOf(resource).AddKeyboard(client, wl_resource_get_version(resource), id);
+}
+
+void SeatGetTouch(wl_client* client, wl_resource* resource, uint32_t id)
+{
+  wl_resource* touch =
+      wl_resource_create(client, &wl_touch_interface, wl_resource_get_version(resource), id);
+  if (!touch)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  wl_resource_set_implementation(touch, &TOUCH_IMPL, nullptr, nullptr);
+}
+
+const struct wl_seat_interface SEAT_IMPL = {
+    SeatGetPointer,
+    SeatGetKeyboard,
+    SeatGetTouch,
+    DestroyResource,
+};
+
+// wp_presentation
+
+void PresentationFeedback(wl_client* client,
+                          wl_resource* resource,
+                          wl_resource* surfaceResource,
+                          uint32_t id)
+{
+  wl_resource* feedback = wl_resource_create(client, &wp_presentation_feedback_interface,
+                                             wl_resource_get_version(resource), id);
+  if (!feedback)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  wl_resource_set_implementation(feedback, nullptr, nullptr, nullptr);
+  auto* surface = SurfaceOf(surfaceResource);
+  if (surface)
+    surface->AddPresentationFeedback(feedback);
+  else
+  {
+    wp_presentation_feedback_send_discarded(feedback);
+    wl_resource_destroy(feedback);
+  }
+}
+
+const struct wp_presentation_interface PRESENTATION_IMPL = {
+    DestroyResource,
+    PresentationFeedback,
+};
+
+// zwp_text_input_v3: accepted, not yet acted upon
+
+const struct zwp_text_input_v3_interface TEXT_INPUT_IMPL = {
+    DestroyResource, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore,
+};
+
+void TextInputManagerGetTextInput(wl_client* client,
+                                  wl_resource* resource,
+                                  uint32_t id,
+                                  wl_resource*)
+{
+  wl_resource* textInput = wl_resource_create(client, &zwp_text_input_v3_interface,
+                                              wl_resource_get_version(resource), id);
+  if (!textInput)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  wl_resource_set_implementation(textInput, &TEXT_INPUT_IMPL, nullptr, nullptr);
+}
+
+const struct zwp_text_input_manager_v3_interface TEXT_INPUT_MANAGER_IMPL = {
+    DestroyResource,
+    TextInputManagerGetTextInput,
+};
+
+wl_resource* BindGlobal(wl_client* client,
+                        const wl_interface& interface,
+                        uint32_t version,
+                        uint32_t maxVersion,
+                        uint32_t id,
+                        const void* implementation,
+                        void* data)
+{
+  wl_resource* resource = wl_resource_create(client, &interface, std::min(version, maxVersion), id);
+  if (!resource)
+  {
+    wl_client_post_no_memory(client);
+    return nullptr;
+  }
+
+  wl_resource_set_implementation(resource, implementation, data, nullptr);
+  return resource;
+}
+
+} // unnamed namespace
+
+CWaylandHost::CWaylandHost(IWaylandHostObserver& observer, WaylandHostConfig config)
+  : CThread("waylandhost"),
+    m_observer(observer),
+    m_config(std::move(config))
+{
+}
+
+CWaylandHost::~CWaylandHost()
+{
+  Stop();
+}
+
+bool CWaylandHost::Start()
+{
+  if (m_display)
+    return true;
+
+  m_display = wl_display_create();
+  if (!m_display)
+  {
+    CLog::Log(LOGERROR, "CWaylandHost::{}: failed to create the display", __FUNCTION__);
+    return false;
+  }
+  m_loop = wl_display_get_event_loop(m_display);
+
+  m_wakeFd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+  if (m_wakeFd < 0)
+  {
+    CLog::Log(LOGERROR, "CWaylandHost::{}: eventfd failed: {}", __FUNCTION__, strerror(errno));
+    DestroyAll();
+    return false;
+  }
+  m_wakeSource = wl_event_loop_add_fd(m_loop, m_wakeFd, WL_EVENT_READABLE, OnWake, this);
+
+  if (!CreateKeymap() || !CreateFormatTable() || !CreateGlobals())
+  {
+    DestroyAll();
+    return false;
+  }
+
+  Create();
+  return true;
+}
+
+void CWaylandHost::Stop()
+{
+  if (!m_display)
+    return;
+
+  m_bStop = true;
+  Post([]() {});
+  StopThread(true);
+  DestroyAll();
+}
+
+void CWaylandHost::Post(std::function<void()> task)
+{
+  {
+    std::unique_lock lock(m_taskLock);
+    m_tasks.push_back(std::move(task));
+  }
+
+  const uint64_t one = 1;
+  if (m_wakeFd >= 0 && write(m_wakeFd, &one, sizeof(one)) != sizeof(one))
+    CLog::Log(LOGERROR, "CWaylandHost::{}: wake failed: {}", __FUNCTION__, strerror(errno));
+}
+
+void CWaylandHost::SpawnClient(std::vector<std::string> argv,
+                               std::map<std::string, std::string> env)
+{
+  Post([this, argv = std::move(argv), env = std::move(env)]() { DoSpawnClient(argv, env); });
+}
+
+void CWaylandHost::TerminateClients()
+{
+  Post([this]() { DoTerminateClients(); });
+}
+
+void CWaylandHost::KeyboardKey(uint32_t evdevCode, bool pressed)
+{
+  Post([this, evdevCode, pressed]() { DoKeyboardKey(evdevCode, pressed); });
+}
+
+void CWaylandHost::PointerMotion(int32_t x, int32_t y)
+{
+  Post([this, x, y]() { DoPointerMotion(x, y); });
+}
+
+void CWaylandHost::PointerButton(uint32_t evdevButton, bool pressed)
+{
+  Post([this, evdevButton, pressed]() { DoPointerButton(evdevButton, pressed); });
+}
+
+void CWaylandHost::PointerAxis(int32_t value120)
+{
+  Post([this, value120]() { DoPointerAxis(value120); });
+}
+
+void CWaylandHost::FrameDone()
+{
+  Post([this]() { DoFrameDone(); });
+}
+
+uint32_t CWaylandHost::NextSerial()
+{
+  return ++m_serial;
+}
+
+void CWaylandHost::Process()
+{
+  while (!m_bStop)
+  {
+    wl_display_flush_clients(m_display);
+    if (wl_event_loop_dispatch(m_loop, -1) < 0 && errno != EINTR)
+    {
+      CLog::Log(LOGERROR, "CWaylandHost::{}: event loop failed: {}", __FUNCTION__, strerror(errno));
+      break;
+    }
+  }
+}
+
+int CWaylandHost::OnWake(int fd, uint32_t, void* data)
+{
+  uint64_t count;
+  while (read(fd, &count, sizeof(count)) == sizeof(count))
+  {
+  }
+
+  static_cast<CWaylandHost*>(data)->RunTasks();
+  return 0;
+}
+
+void CWaylandHost::RunTasks()
+{
+  std::list<std::function<void()>> tasks;
+  {
+    std::unique_lock lock(m_taskLock);
+    tasks.swap(m_tasks);
+  }
+
+  for (auto& task : tasks)
+    task();
+}
+
+bool CWaylandHost::CreateKeymap()
+{
+  m_xkbContext = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+  if (!m_xkbContext)
+    return false;
+
+  xkb_rule_names names{};
+  names.layout = m_config.keyboardLayout.empty() ? nullptr : m_config.keyboardLayout.c_str();
+  m_xkbKeymap = xkb_keymap_new_from_names(m_xkbContext, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
+  if (!m_xkbKeymap)
+  {
+    CLog::Log(LOGERROR, "CWaylandHost::{}: no keymap for layout \"{}\"", __FUNCTION__,
+              m_config.keyboardLayout);
+    return false;
+  }
+  m_xkbState = xkb_state_new(m_xkbKeymap);
+
+  char* keymapString = xkb_keymap_get_as_string(m_xkbKeymap, XKB_KEYMAP_FORMAT_TEXT_V1);
+  if (!keymapString)
+    return false;
+
+  m_keymapSize = strlen(keymapString) + 1;
+  m_keymapFd = SealedMemfd("kodi-keymap", keymapString, m_keymapSize);
+  free(keymapString);
+  return m_keymapFd >= 0;
+}
+
+bool CWaylandHost::CreateFormatTable()
+{
+  struct stat st{};
+  if (stat(m_config.renderDevicePath.c_str(), &st) != 0)
+  {
+    CLog::Log(LOGERROR, "CWaylandHost::{}: cannot stat render device {}: {}", __FUNCTION__,
+              m_config.renderDevicePath, strerror(errno));
+    return false;
+  }
+  m_renderDevice = st.st_rdev;
+
+  std::vector<FormatTableEntry> table;
+  for (uint32_t format : DMABUF_FORMATS)
+    table.push_back({format, 0, DRM_FORMAT_MOD_LINEAR});
+  m_formatTableSize = table.size() * sizeof(FormatTableEntry);
+  m_formatTableFd = SealedMemfd("kodi-dmabuf-formats", table.data(), m_formatTableSize);
+  return m_formatTableFd >= 0;
+}
+
+int CWaylandHost::SealedMemfd(const char* name, const void* data, size_t size)
+{
+  const int fd = memfd_create(name, MFD_CLOEXEC | MFD_ALLOW_SEALING);
+  if (fd >= 0 && write(fd, data, size) == static_cast<ssize_t>(size) &&
+      fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL) == 0)
+    return fd;
+
+  CLog::Log(LOGERROR, "CWaylandHost::{}: {} memfd failed: {}", __FUNCTION__, name, strerror(errno));
+  if (fd >= 0)
+    close(fd);
+  return -1;
+}
+
+bool CWaylandHost::CreateGlobals()
+{
+  if (wl_display_init_shm(m_display) != 0)
+    return false;
+
+  m_globals.push_back(wl_global_create(m_display, &wl_compositor_interface, COMPOSITOR_VERSION,
+                                       this, BindCompositor));
+  m_globals.push_back(
+      wl_global_create(m_display, &wl_output_interface, OUTPUT_VERSION, this, BindOutput));
+  m_globals.push_back(
+      wl_global_create(m_display, &wl_seat_interface, SEAT_VERSION, this, BindSeat));
+  m_globals.push_back(wl_global_create(m_display, &xdg_wm_base_interface, XDG_WM_BASE_VERSION, this,
+                                       BindXdgWmBase));
+  m_globals.push_back(wl_global_create(m_display, &zwp_linux_dmabuf_v1_interface,
+                                       LINUX_DMABUF_VERSION, this, BindLinuxDmabuf));
+  m_globals.push_back(wl_global_create(m_display, &wp_presentation_interface, PRESENTATION_VERSION,
+                                       this, BindPresentation));
+  m_globals.push_back(wl_global_create(m_display, &zwp_text_input_manager_v3_interface,
+                                       TEXT_INPUT_VERSION, this, BindTextInputManager));
+
+  return std::all_of(m_globals.begin(), m_globals.end(), [](wl_global* g) { return g; });
+}
+
+void CWaylandHost::DestroyAll()
+{
+  DoTerminateClients();
+  if (m_display)
+    wl_display_destroy_clients(m_display);
+  for (Client& client : m_clients)
+  {
+    if (client.exitSource)
+      wl_event_source_remove(client.exitSource);
+    if (client.pidfd >= 0)
+      close(client.pidfd);
+    if (client.pid > 0)
+      waitpid(client.pid, nullptr, 0);
+  }
+  m_clients.clear();
+
+  for (wl_global* global : m_globals)
+  {
+    if (global)
+      wl_global_destroy(global);
+  }
+  m_globals.clear();
+  if (m_wakeSource)
+  {
+    wl_event_source_remove(m_wakeSource);
+    m_wakeSource = nullptr;
+  }
+  if (m_display)
+  {
+    wl_display_destroy(m_display);
+    m_display = nullptr;
+    m_loop = nullptr;
+  }
+  for (int* fd : {&m_wakeFd, &m_keymapFd, &m_formatTableFd})
+  {
+    if (*fd >= 0)
+      close(*fd);
+    *fd = -1;
+  }
+  if (m_xkbState)
+    xkb_state_unref(m_xkbState);
+  if (m_xkbKeymap)
+    xkb_keymap_unref(m_xkbKeymap);
+  if (m_xkbContext)
+    xkb_context_unref(m_xkbContext);
+  m_xkbState = nullptr;
+  m_xkbKeymap = nullptr;
+  m_xkbContext = nullptr;
+}
+
+void CWaylandHost::DoSpawnClient(const std::vector<std::string>& argv,
+                                 const std::map<std::string, std::string>& env)
+{
+  if (argv.empty())
+    return;
+
+  int fds[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds) != 0)
+  {
+    CLog::Log(LOGERROR, "CWaylandHost::{}: socketpair failed: {}", __FUNCTION__, strerror(errno));
+    return;
+  }
+
+  // everything the child needs is prepared before fork(), only
+  // async-signal-safe calls happen between fork() and exec
+  std::vector<std::string> envStrings;
+  for (char** entry = environ; entry && *entry; ++entry)
+  {
+    std::string pair = *entry;
+    const std::string name = pair.substr(0, pair.find('='));
+    if (name == "WAYLAND_DISPLAY" || name == "WAYLAND_SOCKET" || env.count(name))
+      continue;
+    envStrings.push_back(std::move(pair));
+  }
+  for (const auto& [name, value] : env)
+    envStrings.push_back(name + "=" + value);
+  envStrings.push_back("WAYLAND_SOCKET=3");
+
+  std::vector<char*> envp;
+  for (auto& entry : envStrings)
+    envp.push_back(entry.data());
+  envp.push_back(nullptr);
+
+  std::vector<std::string> argStrings = argv;
+  std::vector<char*> args;
+  for (auto& entry : argStrings)
+    args.push_back(entry.data());
+  args.push_back(nullptr);
+
+  const pid_t pid = fork();
+  if (pid < 0)
+  {
+    CLog::Log(LOGERROR, "CWaylandHost::{}: fork failed: {}", __FUNCTION__, strerror(errno));
+    close(fds[0]);
+    close(fds[1]);
+    return;
+  }
+  if (pid == 0)
+  {
+    if (dup2(fds[1], 3) == 3)
+      execvpe(args[0], args.data(), envp.data());
+    _exit(127);
+  }
+
+  close(fds[1]);
+
+  m_clients.emplace_back();
+  Client& client = m_clients.back();
+  client.host = this;
+  client.pid = pid;
+  client.client = wl_client_create(m_display, fds[0]);
+  if (!client.client)
+  {
+    CLog::Log(LOGERROR, "CWaylandHost::{}: wl_client_create failed", __FUNCTION__);
+    close(fds[0]);
+    kill(pid, SIGTERM);
+  }
+
+  client.pidfd = static_cast<int>(syscall(SYS_pidfd_open, pid, 0));
+  if (client.pidfd >= 0)
+    client.exitSource =
+        wl_event_loop_add_fd(m_loop, client.pidfd, WL_EVENT_READABLE, OnClientExitStatic, &client);
+  else
+    CLog::Log(LOGERROR, "CWaylandHost::{}: pidfd_open failed: {}", __FUNCTION__, strerror(errno));
+
+  CLog::Log(LOGINFO, "CWaylandHost::{}: started {} as pid {}", __FUNCTION__, argv[0], pid);
+}
+
+int CWaylandHost::OnClientExitStatic(int, uint32_t, void* data)
+{
+  auto* client = static_cast<Client*>(data);
+  client->host->OnClientExit(*client);
+  return 0;
+}
+
+void CWaylandHost::OnClientExit(Client& client)
+{
+  int status = 0;
+  if (waitpid(client.pid, &status, WNOHANG) != client.pid)
+    return;
+
+  CLog::Log(LOGINFO, "CWaylandHost::{}: client pid {} exited with status {}", __FUNCTION__,
+            client.pid, status);
+  wl_event_source_remove(client.exitSource);
+  close(client.pidfd);
+  const pid_t pid = client.pid;
+  m_clients.remove_if([&client](const Client& entry) { return &entry == &client; });
+  m_observer.OnClientExited(pid, status);
+}
+
+void CWaylandHost::DoTerminateClients()
+{
+  for (Client& client : m_clients)
+  {
+    if (client.pid > 0)
+      kill(client.pid, SIGTERM);
+  }
+}
+
+void CWaylandHost::BindCompositor(wl_client* client, void* data, uint32_t version, uint32_t id)
+{
+  BindGlobal(client, wl_compositor_interface, version, COMPOSITOR_VERSION, id, &COMPOSITOR_IMPL,
+             data);
+}
+
+void CWaylandHost::BindOutput(wl_client* client, void* data, uint32_t version, uint32_t id)
+{
+  auto* host = static_cast<CWaylandHost*>(data);
+  wl_resource* resource =
+      BindGlobal(client, wl_output_interface, version, OUTPUT_VERSION, id, nullptr, data);
+  if (!resource)
+    return;
+
+  wl_output_send_geometry(resource, 0, 0, 0, 0, WL_OUTPUT_SUBPIXEL_UNKNOWN, "Kodi", "Kodi",
+                          WL_OUTPUT_TRANSFORM_NORMAL);
+  wl_output_send_mode(resource, WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED,
+                      host->m_config.width, host->m_config.height, host->m_config.refreshMilliHz);
+  if (wl_resource_get_version(resource) >= WL_OUTPUT_SCALE_SINCE_VERSION)
+    wl_output_send_scale(resource, 1);
+  if (wl_resource_get_version(resource) >= WL_OUTPUT_DONE_SINCE_VERSION)
+    wl_output_send_done(resource);
+}
+
+void CWaylandHost::BindSeat(wl_client* client, void* data, uint32_t version, uint32_t id)
+{
+  wl_resource* resource =
+      BindGlobal(client, wl_seat_interface, version, SEAT_VERSION, id, &SEAT_IMPL, data);
+  if (!resource)
+    return;
+
+  wl_seat_send_capabilities(resource, WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
+  if (wl_resource_get_version(resource) >= WL_SEAT_NAME_SINCE_VERSION)
+    wl_seat_send_name(resource, "seat0");
+}
+
+void CWaylandHost::BindXdgWmBase(wl_client* client, void* data, uint32_t version, uint32_t id)
+{
+  BindGlobal(client, xdg_wm_base_interface, version, XDG_WM_BASE_VERSION, id, &WM_BASE_IMPL, data);
+}
+
+void CWaylandHost::BindLinuxDmabuf(wl_client* client, void* data, uint32_t version, uint32_t id)
+{
+  wl_resource* resource = BindGlobal(client, zwp_linux_dmabuf_v1_interface, version,
+                                     LINUX_DMABUF_VERSION, id, &DMABUF_IMPL, data);
+  if (!resource)
+    return;
+
+  if (wl_resource_get_version(resource) < ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION)
+  {
+    for (uint32_t format : DMABUF_FORMATS)
+      zwp_linux_dmabuf_v1_send_format(resource, format);
+  }
+}
+
+void CWaylandHost::BindPresentation(wl_client* client, void* data, uint32_t version, uint32_t id)
+{
+  wl_resource* resource = BindGlobal(client, wp_presentation_interface, version,
+                                     PRESENTATION_VERSION, id, &PRESENTATION_IMPL, data);
+  if (resource)
+    wp_presentation_send_clock_id(resource, CLOCK_MONOTONIC);
+}
+
+void CWaylandHost::BindTextInputManager(wl_client* client,
+                                        void* data,
+                                        uint32_t version,
+                                        uint32_t id)
+{
+  BindGlobal(client, zwp_text_input_manager_v3_interface, version, TEXT_INPUT_VERSION, id,
+             &TEXT_INPUT_MANAGER_IMPL, data);
+}
+
+void CWaylandHost::SendDmabufFeedback(wl_resource* feedback)
+{
+  zwp_linux_dmabuf_feedback_v1_send_format_table(feedback, m_formatTableFd, m_formatTableSize);
+
+  wl_array device;
+  wl_array_init(&device);
+  memcpy(wl_array_add(&device, sizeof(m_renderDevice)), &m_renderDevice, sizeof(m_renderDevice));
+  zwp_linux_dmabuf_feedback_v1_send_main_device(feedback, &device);
+  zwp_linux_dmabuf_feedback_v1_send_tranche_target_device(feedback, &device);
+  wl_array_release(&device);
+
+  zwp_linux_dmabuf_feedback_v1_send_tranche_flags(
+      feedback, ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SCANOUT);
+
+  wl_array indices;
+  wl_array_init(&indices);
+  const size_t count = m_formatTableSize / sizeof(FormatTableEntry);
+  auto* index = static_cast<uint16_t*>(wl_array_add(&indices, count * sizeof(uint16_t)));
+  for (size_t i = 0; i < count; ++i)
+    index[i] = static_cast<uint16_t>(i);
+  zwp_linux_dmabuf_feedback_v1_send_tranche_formats(feedback, &indices);
+  wl_array_release(&indices);
+
+  zwp_linux_dmabuf_feedback_v1_send_tranche_done(feedback);
+  zwp_linux_dmabuf_feedback_v1_send_done(feedback);
+}
+
+void CWaylandHost::AddKeyboard(wl_client* client, uint32_t version, uint32_t id)
+{
+  wl_resource* keyboard = wl_resource_create(client, &wl_keyboard_interface, version, id);
+  if (!keyboard)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  wl_resource_set_implementation(keyboard, &KEYBOARD_IMPL, this, KeyboardResourceDestroyed);
+  m_keyboards.push_back(keyboard);
+
+  wl_keyboard_send_keymap(keyboard, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, m_keymapFd, m_keymapSize);
+  // Kodi delivers its own key repeats, the client must not add any
+  if (version >= WL_KEYBOARD_REPEAT_INFO_SINCE_VERSION)
+    wl_keyboard_send_repeat_info(keyboard, 0, 0);
+
+  if (m_keyboardFocus && wl_resource_get_client(m_keyboardFocus->GetResource()) == client)
+    SendKeyboardEnterTo(keyboard, *m_keyboardFocus);
+}
+
+void CWaylandHost::RemoveKeyboard(wl_resource* keyboard)
+{
+  m_keyboards.remove(keyboard);
+}
+
+void CWaylandHost::AddPointer(wl_client* client, uint32_t version, uint32_t id)
+{
+  wl_resource* pointer = wl_resource_create(client, &wl_pointer_interface, version, id);
+  if (!pointer)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  wl_resource_set_implementation(pointer, &POINTER_IMPL, this, PointerResourceDestroyed);
+  m_pointers.push_back(pointer);
+
+  if (m_pointerFocus && wl_resource_get_client(m_pointerFocus->GetResource()) == client)
+    SendPointerEnterTo(pointer, *m_pointerFocus);
+}
+
+void CWaylandHost::RemovePointer(wl_resource* pointer)
+{
+  m_pointers.remove(pointer);
+}
+
+void CWaylandHost::OnSurfaceCreated(CWaylandSurface* surface)
+{
+  m_surfaces.push_back(surface);
+}
+
+void CWaylandHost::OnSurfaceDestroyed(CWaylandSurface* surface)
+{
+  m_surfaces.remove(surface);
+  if (m_keyboardFocus == surface)
+    m_keyboardFocus = nullptr;
+  if (m_pointerFocus == surface)
+    m_pointerFocus = nullptr;
+}
+
+void CWaylandHost::OnSurfaceMapped(CWaylandSurface& surface)
+{
+  SetKeyboardFocus(&surface);
+  m_observer.OnSurfaceMapped(surface);
+}
+
+void CWaylandHost::OnSurfaceUnmapped(CWaylandSurface& surface)
+{
+  if (m_keyboardFocus == &surface)
+    SetKeyboardFocus(nullptr);
+  if (m_pointerFocus == &surface)
+    SendPointerLeave();
+  m_observer.OnSurfaceUnmapped(surface);
+}
+
+void CWaylandHost::OnSurfaceFrame(CWaylandSurface& surface, std::shared_ptr<CWaylandBuffer> buffer)
+{
+  m_observer.OnSurfaceFrame(surface, std::move(buffer));
+}
+
+void CWaylandHost::SetKeyboardFocus(CWaylandSurface* surface)
+{
+  if (surface == m_keyboardFocus)
+    return;
+
+  if (m_keyboardFocus)
+    SendKeyboardLeave(*m_keyboardFocus);
+  // the pointer follows the keyboard focus on its next motion
+  SendPointerLeave();
+  m_keyboardFocus = surface;
+  if (surface)
+    SendKeyboardEnter(*surface);
+}
+
+void CWaylandHost::SendKeyboardEnter(CWaylandSurface& surface)
+{
+  wl_client* client = wl_resource_get_client(surface.GetResource());
+  for (wl_resource* keyboard : m_keyboards)
+  {
+    if (wl_resource_get_client(keyboard) == client)
+      SendKeyboardEnterTo(keyboard, surface);
+  }
+}
+
+void CWaylandHost::SendKeyboardEnterTo(wl_resource* keyboard, CWaylandSurface& surface)
+{
+  wl_array keys;
+  wl_array_init(&keys);
+  wl_keyboard_send_enter(keyboard, NextSerial(), surface.GetResource(), &keys);
+  wl_array_release(&keys);
+  wl_keyboard_send_modifiers(keyboard, NextSerial(), m_modsDepressed, m_modsLatched, m_modsLocked,
+                             m_modsGroup);
+}
+
+void CWaylandHost::SendKeyboardLeave(CWaylandSurface& surface)
+{
+  wl_client* client = wl_resource_get_client(surface.GetResource());
+  const uint32_t serial = NextSerial();
+  for (wl_resource* keyboard : m_keyboards)
+  {
+    if (wl_resource_get_client(keyboard) == client)
+      wl_keyboard_send_leave(keyboard, serial, surface.GetResource());
+  }
+}
+
+void CWaylandHost::SendPointerEnter(CWaylandSurface& surface)
+{
+  m_pointerFocus = &surface;
+  wl_client* client = wl_resource_get_client(surface.GetResource());
+  for (wl_resource* pointer : m_pointers)
+  {
+    if (wl_resource_get_client(pointer) == client)
+      SendPointerEnterTo(pointer, surface);
+  }
+}
+
+void CWaylandHost::SendPointerEnterTo(wl_resource* pointer, CWaylandSurface& surface)
+{
+  wl_pointer_send_enter(pointer, NextSerial(), surface.GetResource(), wl_fixed_from_int(m_pointerX),
+                        wl_fixed_from_int(m_pointerY));
+  if (wl_resource_get_version(pointer) >= WL_POINTER_FRAME_SINCE_VERSION)
+    wl_pointer_send_frame(pointer);
+}
+
+void CWaylandHost::SendPointerLeave()
+{
+  if (!m_pointerFocus)
+    return;
+
+  wl_client* client = wl_resource_get_client(m_pointerFocus->GetResource());
+  const uint32_t serial = NextSerial();
+  for (wl_resource* pointer : m_pointers)
+  {
+    if (wl_resource_get_client(pointer) != client)
+      continue;
+    wl_pointer_send_leave(pointer, serial, m_pointerFocus->GetResource());
+    if (wl_resource_get_version(pointer) >= WL_POINTER_FRAME_SINCE_VERSION)
+      wl_pointer_send_frame(pointer);
+  }
+  m_pointerFocus = nullptr;
+}
+
+void CWaylandHost::SendModifiers()
+{
+  const uint32_t depressed = xkb_state_serialize_mods(m_xkbState, XKB_STATE_MODS_DEPRESSED);
+  const uint32_t latched = xkb_state_serialize_mods(m_xkbState, XKB_STATE_MODS_LATCHED);
+  const uint32_t locked = xkb_state_serialize_mods(m_xkbState, XKB_STATE_MODS_LOCKED);
+  const uint32_t group = xkb_state_serialize_layout(m_xkbState, XKB_STATE_LAYOUT_EFFECTIVE);
+  if (depressed == m_modsDepressed && latched == m_modsLatched && locked == m_modsLocked &&
+      group == m_modsGroup)
+    return;
+
+  m_modsDepressed = depressed;
+  m_modsLatched = latched;
+  m_modsLocked = locked;
+  m_modsGroup = group;
+  if (!m_keyboardFocus)
+    return;
+
+  wl_client* client = wl_resource_get_client(m_keyboardFocus->GetResource());
+  const uint32_t serial = NextSerial();
+  for (wl_resource* keyboard : m_keyboards)
+  {
+    if (wl_resource_get_client(keyboard) == client)
+      wl_keyboard_send_modifiers(keyboard, serial, depressed, latched, locked, group);
+  }
+}
+
+void CWaylandHost::DoKeyboardKey(uint32_t evdevCode, bool pressed)
+{
+  xkb_state_update_key(m_xkbState, evdevCode + XKB_KEYCODE_OFFSET,
+                       pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
+  if (m_keyboardFocus)
+  {
+    wl_client* client = wl_resource_get_client(m_keyboardFocus->GetResource());
+    const uint32_t serial = NextSerial();
+    const uint32_t time = Milliseconds(Now());
+    const uint32_t state = pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED;
+    for (wl_resource* keyboard : m_keyboards)
+    {
+      if (wl_resource_get_client(keyboard) == client)
+        wl_keyboard_send_key(keyboard, serial, time, evdevCode, state);
+    }
+  }
+  SendModifiers();
+}
+
+void CWaylandHost::DoPointerMotion(int32_t x, int32_t y)
+{
+  m_pointerX = x;
+  m_pointerY = y;
+  if (!m_keyboardFocus)
+    return;
+
+  if (m_pointerFocus != m_keyboardFocus)
+  {
+    SendPointerEnter(*m_keyboardFocus);
+    return;
+  }
+
+  wl_client* client = wl_resource_get_client(m_pointerFocus->GetResource());
+  const uint32_t time = Milliseconds(Now());
+  for (wl_resource* pointer : m_pointers)
+  {
+    if (wl_resource_get_client(pointer) != client)
+      continue;
+    wl_pointer_send_motion(pointer, time, wl_fixed_from_int(x), wl_fixed_from_int(y));
+    if (wl_resource_get_version(pointer) >= WL_POINTER_FRAME_SINCE_VERSION)
+      wl_pointer_send_frame(pointer);
+  }
+}
+
+void CWaylandHost::DoPointerButton(uint32_t evdevButton, bool pressed)
+{
+  if (!m_pointerFocus)
+    return;
+
+  wl_client* client = wl_resource_get_client(m_pointerFocus->GetResource());
+  const uint32_t serial = NextSerial();
+  const uint32_t time = Milliseconds(Now());
+  const uint32_t state =
+      pressed ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED;
+  for (wl_resource* pointer : m_pointers)
+  {
+    if (wl_resource_get_client(pointer) != client)
+      continue;
+    wl_pointer_send_button(pointer, serial, time, evdevButton, state);
+    if (wl_resource_get_version(pointer) >= WL_POINTER_FRAME_SINCE_VERSION)
+      wl_pointer_send_frame(pointer);
+  }
+}
+
+void CWaylandHost::DoPointerAxis(int32_t value120)
+{
+  if (!m_pointerFocus)
+    return;
+
+  wl_client* client = wl_resource_get_client(m_pointerFocus->GetResource());
+  const uint32_t time = Milliseconds(Now());
+  for (wl_resource* pointer : m_pointers)
+  {
+    if (wl_resource_get_client(pointer) != client)
+      continue;
+    const uint32_t version = wl_resource_get_version(pointer);
+    if (version >= WL_POINTER_AXIS_SOURCE_SINCE_VERSION)
+      wl_pointer_send_axis_source(pointer, WL_POINTER_AXIS_SOURCE_WHEEL);
+    if (version >= WL_POINTER_AXIS_DISCRETE_SINCE_VERSION)
+      wl_pointer_send_axis_discrete(pointer, WL_POINTER_AXIS_VERTICAL_SCROLL, value120 / 120);
+    wl_pointer_send_axis(pointer, time, WL_POINTER_AXIS_VERTICAL_SCROLL,
+                         wl_fixed_from_int(value120 / AXIS_UNITS_PER_VALUE120));
+    if (version >= WL_POINTER_FRAME_SINCE_VERSION)
+      wl_pointer_send_frame(pointer);
+  }
+}
+
+void CWaylandHost::DoFrameDone()
+{
+  const timespec now = Now();
+  const uint32_t time = Milliseconds(now);
+  const uint32_t refreshNs = m_config.refreshMilliHz > 0
+                                 ? static_cast<uint32_t>(1000000000000ULL / m_config.refreshMilliHz)
+                                 : 0;
+  for (CWaylandSurface* surface : m_surfaces)
+    surface->FrameDone(time, now, refreshNs);
+}
