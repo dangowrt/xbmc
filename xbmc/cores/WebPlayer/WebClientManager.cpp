@@ -11,6 +11,9 @@
 #include "FileItem.h"
 #include "FileItemList.h"
 #include "ServiceBroker.h"
+#include "addons/Addon.h"
+#include "addons/AddonManager.h"
+#include "addons/addoninfo/AddonType.h"
 #include "filesystem/Directory.h"
 #include "filesystem/File.h"
 #include "filesystem/SpecialProtocol.h"
@@ -306,8 +309,50 @@ void CWebClientManager::OnWebClientReady()
     m_host->WebWantView(profile, {});
 }
 
+bool CWebClientManager::ConfigureViewFromAddon(const std::string& profile)
+{
+  ADDON::AddonPtr addon;
+  if (!CServiceBroker::GetAddonMgr().GetAddon(profile, addon, ADDON::AddonType::WEBAPP,
+                                              ADDON::OnlyEnabled::CHOICE_YES))
+    return false;
+
+  const auto webapp = std::dynamic_pointer_cast<ADDON::CAddon>(addon);
+  const ADDON::CAddonType* type = webapp ? webapp->Type(ADDON::AddonType::WEBAPP) : nullptr;
+  if (!type)
+    return false;
+
+  const std::string identity = webapp->GetSetting("identity");
+  std::string userAgent = identity == "custom" ? webapp->GetSetting("useragent") : "";
+  for (const auto& [element, values] : type->GetValues())
+  {
+    if (element == "useragent" && userAgent.empty() &&
+        values.GetValue("useragent@id").asString() == identity)
+      userAgent = values.GetValue("useragent").asString();
+  }
+  if (!userAgent.empty())
+    m_host->WebViewSetUserAgent(profile, userAgent);
+
+  for (const auto& [element, values] : type->GetValues())
+  {
+    if (element == "userscript")
+      SendProfileFile(
+          profile,
+          URIUtils::AddFileToFolder(webapp->Path(), values.GetValue("userscript").asString()),
+          true);
+    else if (element == "contentfilter")
+      SendProfileFile(
+          profile,
+          URIUtils::AddFileToFolder(webapp->Path(), values.GetValue("contentfilter").asString()),
+          false);
+  }
+  return true;
+}
+
 void CWebClientManager::ConfigureView(const std::string& profile)
 {
+  if (ConfigureViewFromAddon(profile))
+    return;
+
   const std::string root = PROFILE_ROOT + profile + "/";
   if (!XFILE::CDirectory::Exists(root))
     return;
@@ -340,24 +385,29 @@ void CWebClientManager::SendProfileFiles(const std::string& profile,
   std::sort(files.begin(), files.end());
 
   for (const std::string& file : files)
-  {
-    const int fd = open(CSpecialProtocol::TranslatePath(file).c_str(), O_RDONLY | O_CLOEXEC);
-    struct stat st = {};
-    if (fd < 0 || fstat(fd, &st) != 0)
-    {
-      CLog::Log(LOGERROR, "CWebClientManager::{}: cannot read {}", __FUNCTION__, file);
-      if (fd >= 0)
-        close(fd);
-      continue;
-    }
+    SendProfileFile(profile, file, scripts);
+}
 
-    const std::string name = URIUtils::GetFileName(file);
-    const auto size = static_cast<uint32_t>(st.st_size);
-    if (scripts)
-      m_host->WebViewAddUserScript(profile, name, fd, size);
-    else
-      m_host->WebViewAddContentFilter(profile, name, fd, size);
+void CWebClientManager::SendProfileFile(const std::string& profile,
+                                        const std::string& file,
+                                        bool script)
+{
+  const int fd = open(CSpecialProtocol::TranslatePath(file).c_str(), O_RDONLY | O_CLOEXEC);
+  struct stat st = {};
+  if (fd < 0 || fstat(fd, &st) != 0)
+  {
+    CLog::Log(LOGERROR, "CWebClientManager::{}: cannot read {}", __FUNCTION__, file);
+    if (fd >= 0)
+      close(fd);
+    return;
   }
+
+  const std::string name = URIUtils::GetFileName(file);
+  const auto size = static_cast<uint32_t>(st.st_size);
+  if (script)
+    m_host->WebViewAddUserScript(profile, name, fd, size);
+  else
+    m_host->WebViewAddContentFilter(profile, name, fd, size);
 }
 
 void CWebClientManager::OnWebViewCreated(const std::string& profile, CWaylandSurface& surface)

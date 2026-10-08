@@ -116,10 +116,12 @@ private:
   bool StartHost();
   void Spawn();
   void ConfigureView(const std::string& profile);
+  bool ConfigureViewFromAddon(const std::string& profile);
   void SendProfileFiles(const std::string& profile,
                         const std::string& path,
                         const std::string& extension,
                         bool scripts);
+  void SendProfileFile(const std::string& profile, const std::string& file, bool script);
   IWebViewObserver* ObserverOf(const std::string& profile);
 
   std::unique_ptr<WAYLANDHOST::CWaylandHost> m_host;
