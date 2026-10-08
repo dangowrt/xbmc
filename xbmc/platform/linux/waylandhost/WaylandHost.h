@@ -41,6 +41,26 @@ class CWaylandBuffer;
 class CWaylandSurface;
 
 /*!
+ * \brief What the focused page tells about its text input: the text around
+ * the caret with the caret's byte offset, the content type and the caret
+ * rectangle in surface coordinates
+ */
+struct TextInputState
+{
+  bool enabled{false};
+  std::string surrounding;
+  int32_t cursor{0};
+  uint32_t hint{0};
+  uint32_t purpose{0};
+  int32_t caretX{0};
+  int32_t caretY{0};
+  int32_t caretWidth{0};
+  int32_t caretHeight{0};
+
+  bool IsHidden() const;
+};
+
+/*!
  * \brief Receives what the clients do. All methods run on the host thread.
  */
 class IWaylandHostObserver
@@ -75,6 +95,12 @@ public:
   {
   }
   virtual void OnWebViewDestroyed(const std::string& profile) {}
+
+  // zwp_text_input_v3: the focused page asks for an on-screen keyboard,
+  // then reports its text and caret after every change
+  virtual void OnTextInputEnabled(const TextInputState& state) {}
+  virtual void OnTextInputUpdated(const TextInputState& state) {}
+  virtual void OnTextInputDisabled() {}
 };
 
 enum class WebNavigation
@@ -130,6 +156,12 @@ public:
   void PointerAxis(int32_t value120);
 
   /*!
+   * \brief Scroll the content under a point of the focused surface by a
+   * number of pixels, as a touchpad would; any thread
+   */
+  void PointerScroll(int32_t x, int32_t y, int32_t pixels);
+
+  /*!
    * \brief A display refresh has passed; any thread
    */
   void FrameDone();
@@ -141,6 +173,12 @@ public:
   void WebViewSetActive(std::string profile, bool active);
   void WebViewClose(std::string profile);
   void WebViewSetUserAgent(std::string profile, std::string userAgent);
+
+  /*!
+   * \brief Replace the text around the cursor of the enabled text input;
+   * any thread
+   */
+  void TextInputCommit(std::string text, uint32_t deleteBefore, uint32_t deleteAfter);
 
   /*!
    * \brief Hand the client a script or filter; the host owns the descriptor
@@ -156,6 +194,17 @@ public:
     std::string profile;
     CWaylandSurface* surface{nullptr};
     bool active{false};
+  };
+
+  struct TextInput
+  {
+    CWaylandHost* host{nullptr};
+    wl_resource* resource{nullptr};
+    TextInputState current;
+    TextInputState pending;
+    uint32_t serial{0};
+    uint32_t enableRequests{0};
+    bool keyboardShown{false};
   };
 
   // host thread only
@@ -176,6 +225,14 @@ public:
   void OnWebViewNavigationState(WebView& view, uint32_t canGoBack, uint32_t canGoForward);
   void OnWebViewError(WebView& view, uint32_t code, const char* message);
   void OnWebViewResourceDestroyed(WebView& view);
+  void AddTextInput(wl_client* client, uint32_t version, uint32_t id);
+  void OnTextInputEnable(TextInput& input, bool enable);
+  void OnTextInputSurroundingText(TextInput& input, const char* text, int32_t cursor);
+  void OnTextInputContentType(TextInput& input, uint32_t hint, uint32_t purpose);
+  void OnTextInputCursorRectangle(
+      TextInput& input, int32_t x, int32_t y, int32_t width, int32_t height);
+  void OnTextInputCommit(TextInput& input);
+  void OnTextInputResourceDestroyed(TextInput& input);
   const WaylandHostConfig& GetConfig() const { return m_config; }
   uint32_t NextSerial();
   void OnSurfaceCreated(CWaylandSurface* surface);
@@ -215,6 +272,7 @@ private:
   void DoPointerMotion(int32_t x, int32_t y);
   void DoPointerButton(uint32_t evdevButton, bool pressed);
   void DoPointerAxis(int32_t value120);
+  void DoPointerScroll(int32_t x, int32_t y, int32_t pixels);
   void DoFrameDone();
   void SetKeyboardFocus(CWaylandSurface* surface);
   void SendKeyboardEnter(CWaylandSurface& surface);
@@ -242,6 +300,7 @@ private:
   WebView* FindWebView(const std::string& profile);
   WebView* WebViewOf(const CWaylandSurface* surface);
   void DoWebViewSetActive(WebView& view, bool active);
+  void SendTextInputFocus(CWaylandSurface* surface, bool entered);
   void SendWebViewFile(
       const std::string& profile, const std::string& name, int fd, uint32_t size, bool script);
 
@@ -261,6 +320,7 @@ private:
   std::list<CWaylandSurface*> m_surfaces;
   wl_resource* m_webManager{nullptr};
   std::list<WebView> m_views;
+  std::list<TextInput> m_textInputs;
   std::list<wl_resource*> m_keyboards;
   std::list<wl_resource*> m_pointers;
   CWaylandSurface* m_keyboardFocus{nullptr};
