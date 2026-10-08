@@ -635,26 +635,77 @@ const struct wp_presentation_interface PRESENTATION_IMPL = {
     PresentationFeedback,
 };
 
-// zwp_text_input_v3: accepted, not yet acted upon
+// zwp_text_input_v3
+
+CWaylandHost::TextInput* TextInputOf(wl_resource* resource)
+{
+  return static_cast<CWaylandHost::TextInput*>(wl_resource_get_user_data(resource));
+}
+
+void TextInputEnable(wl_client*, wl_resource* resource)
+{
+  if (auto* input = TextInputOf(resource))
+    input->host->OnTextInputEnable(*input, true);
+}
+
+void TextInputDisable(wl_client*, wl_resource* resource)
+{
+  if (auto* input = TextInputOf(resource))
+    input->host->OnTextInputEnable(*input, false);
+}
+
+void TextInputSetSurroundingText(
+    wl_client*, wl_resource* resource, const char* text, int32_t cursor, int32_t)
+{
+  if (auto* input = TextInputOf(resource))
+    input->host->OnTextInputSurroundingText(*input, text, cursor);
+}
+
+void TextInputSetContentType(wl_client*, wl_resource* resource, uint32_t hint, uint32_t purpose)
+{
+  if (auto* input = TextInputOf(resource))
+    input->host->OnTextInputContentType(*input, hint, purpose);
+}
+
+void TextInputSetCursorRectangle(
+    wl_client*, wl_resource* resource, int32_t x, int32_t y, int32_t width, int32_t height)
+{
+  if (auto* input = TextInputOf(resource))
+    input->host->OnTextInputCursorRectangle(*input, x, y, width, height);
+}
+
+void TextInputCommit(wl_client*, wl_resource* resource)
+{
+  if (auto* input = TextInputOf(resource))
+    input->host->OnTextInputCommit(*input);
+}
 
 const struct zwp_text_input_v3_interface TEXT_INPUT_IMPL = {
-    DestroyResource, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore, Ignore,
+    DestroyResource,
+    TextInputEnable,
+    TextInputDisable,
+    TextInputSetSurroundingText,
+    Ignore,
+    TextInputSetContentType,
+    TextInputSetCursorRectangle,
+    TextInputCommit,
+    Ignore,
+    Ignore,
+    Ignore,
 };
+
+void TextInputResourceDestroyed(wl_resource* resource)
+{
+  if (auto* input = TextInputOf(resource))
+    input->host->OnTextInputResourceDestroyed(*input);
+}
 
 void TextInputManagerGetTextInput(wl_client* client,
                                   wl_resource* resource,
                                   uint32_t id,
                                   wl_resource*)
 {
-  wl_resource* textInput = wl_resource_create(client, &zwp_text_input_v3_interface,
-                                              wl_resource_get_version(resource), id);
-  if (!textInput)
-  {
-    wl_client_post_no_memory(client);
-    return;
-  }
-
-  wl_resource_set_implementation(textInput, &TEXT_INPUT_IMPL, nullptr, nullptr);
+  HostOf(resource).AddTextInput(client, wl_resource_get_version(resource), id);
 }
 
 const struct zwp_text_input_manager_v3_interface TEXT_INPUT_MANAGER_IMPL = {
@@ -872,6 +923,11 @@ void CWaylandHost::PointerAxis(int32_t value120)
   Post([this, value120]() { DoPointerAxis(value120); });
 }
 
+void CWaylandHost::PointerScroll(int32_t x, int32_t y, int32_t pixels)
+{
+  Post([this, x, y, pixels]() { DoPointerScroll(x, y, pixels); });
+}
+
 void CWaylandHost::FrameDone()
 {
   Post([this]() { DoFrameDone(); });
@@ -1018,6 +1074,7 @@ void CWaylandHost::DestroyAll()
   }
   m_clients.clear();
   m_views.clear();
+  m_textInputs.clear();
   m_webManager = nullptr;
 
   for (wl_global* global : m_globals)
@@ -1610,6 +1667,146 @@ void CWaylandHost::SendKeyboardEnter(CWaylandSurface& surface)
     if (wl_resource_get_client(keyboard) == client)
       SendKeyboardEnterTo(keyboard, surface);
   }
+  SendTextInputFocus(&surface, true);
+}
+
+void CWaylandHost::SendTextInputFocus(CWaylandSurface* surface, bool entered)
+{
+  if (!surface)
+    return;
+
+  wl_client* client = wl_resource_get_client(surface->GetResource());
+  for (TextInput& input : m_textInputs)
+  {
+    if (wl_resource_get_client(input.resource) != client)
+      continue;
+    if (entered)
+      zwp_text_input_v3_send_enter(input.resource, surface->GetResource());
+    else
+      zwp_text_input_v3_send_leave(input.resource, surface->GetResource());
+  }
+}
+
+void CWaylandHost::AddTextInput(wl_client* client, uint32_t version, uint32_t id)
+{
+  wl_resource* resource = wl_resource_create(client, &zwp_text_input_v3_interface, version, id);
+  if (!resource)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  TextInput input;
+  input.host = this;
+  input.resource = resource;
+  m_textInputs.push_back(std::move(input));
+  wl_resource_set_implementation(resource, &TEXT_INPUT_IMPL, &m_textInputs.back(),
+                                 TextInputResourceDestroyed);
+  if (m_keyboardFocus && wl_resource_get_client(m_keyboardFocus->GetResource()) == client)
+    zwp_text_input_v3_send_enter(resource, m_keyboardFocus->GetResource());
+}
+
+void CWaylandHost::OnTextInputEnable(TextInput& input, bool enable)
+{
+  input.pending.enabled = enable;
+  if (!enable)
+  {
+    input.enableRequests = 0;
+    return;
+  }
+
+  ++input.enableRequests;
+  input.pending.surrounding.clear();
+  input.pending.cursor = 0;
+  input.pending.hint = 0;
+  input.pending.purpose = 0;
+  input.pending.caretX = 0;
+  input.pending.caretY = 0;
+  input.pending.caretWidth = 0;
+  input.pending.caretHeight = 0;
+}
+
+void CWaylandHost::OnTextInputSurroundingText(TextInput& input, const char* text, int32_t cursor)
+{
+  input.pending.surrounding = text ? text : "";
+  input.pending.cursor = cursor;
+}
+
+void CWaylandHost::OnTextInputContentType(TextInput& input, uint32_t hint, uint32_t purpose)
+{
+  input.pending.hint = hint;
+  input.pending.purpose = purpose;
+}
+
+void CWaylandHost::OnTextInputCursorRectangle(
+    TextInput& input, int32_t x, int32_t y, int32_t width, int32_t height)
+{
+  input.pending.caretX = x;
+  input.pending.caretY = y;
+  input.pending.caretWidth = width;
+  input.pending.caretHeight = height;
+}
+
+void CWaylandHost::OnTextInputCommit(TextInput& input)
+{
+  input.current = input.pending;
+  ++input.serial;
+  CLog::Log(LOGDEBUG,
+            "CWaylandHost::{}: text input {} after {} enable requests, caret {},{} {}x{}, "
+            "cursor {} in \"{}\"",
+            __FUNCTION__, input.current.enabled ? "enabled" : "disabled", input.enableRequests,
+            input.current.caretX, input.current.caretY, input.current.caretWidth,
+            input.current.caretHeight, input.current.cursor, input.current.surrounding);
+  if (!input.current.enabled)
+  {
+    if (input.keyboardShown)
+      m_observer.OnTextInputDisabled();
+    input.keyboardShown = false;
+    return;
+  }
+
+  // a page drawing its own keyboard enables the text input once; one that
+  // wants the compositor's keyboard enables it again, as Mutter expects
+  if (input.keyboardShown)
+    m_observer.OnTextInputUpdated(input.current);
+  else if (input.enableRequests >= 2)
+  {
+    input.keyboardShown = true;
+    m_observer.OnTextInputEnabled(input.current);
+  }
+}
+
+void CWaylandHost::OnTextInputResourceDestroyed(TextInput& input)
+{
+  const bool keyboardShown = input.keyboardShown;
+  m_textInputs.remove_if([&input](const TextInput& entry) { return &entry == &input; });
+  if (keyboardShown)
+    m_observer.OnTextInputDisabled();
+}
+
+bool TextInputState::IsHidden() const
+{
+  return (hint & ZWP_TEXT_INPUT_V3_CONTENT_HINT_HIDDEN_TEXT) != 0 ||
+         purpose == ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PASSWORD ||
+         purpose == ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PIN;
+}
+
+void CWaylandHost::TextInputCommit(std::string text, uint32_t deleteBefore, uint32_t deleteAfter)
+{
+  Post(
+      [this, text = std::move(text), deleteBefore, deleteAfter]()
+      {
+        for (TextInput& input : m_textInputs)
+        {
+          if (!input.current.enabled)
+            continue;
+          if (deleteBefore || deleteAfter)
+            zwp_text_input_v3_send_delete_surrounding_text(input.resource, deleteBefore,
+                                                           deleteAfter);
+          zwp_text_input_v3_send_commit_string(input.resource, text.c_str());
+          zwp_text_input_v3_send_done(input.resource, input.serial);
+        }
+      });
 }
 
 void CWaylandHost::SendKeyboardEnterTo(wl_resource* keyboard, CWaylandSurface& surface)
@@ -1631,6 +1828,7 @@ void CWaylandHost::SendKeyboardLeave(CWaylandSurface& surface)
     if (wl_resource_get_client(keyboard) == client)
       wl_keyboard_send_leave(keyboard, serial, surface.GetResource());
   }
+  SendTextInputFocus(&surface, false);
 }
 
 void CWaylandHost::SendPointerEnter(CWaylandSurface& surface)
@@ -1778,6 +1976,28 @@ void CWaylandHost::DoPointerAxis(int32_t value120)
       wl_pointer_send_axis_discrete(pointer, WL_POINTER_AXIS_VERTICAL_SCROLL, value120 / 120);
     wl_pointer_send_axis(pointer, time, WL_POINTER_AXIS_VERTICAL_SCROLL,
                          wl_fixed_from_int(value120 / AXIS_UNITS_PER_VALUE120));
+    if (version >= WL_POINTER_FRAME_SINCE_VERSION)
+      wl_pointer_send_frame(pointer);
+  }
+}
+
+void CWaylandHost::DoPointerScroll(int32_t x, int32_t y, int32_t pixels)
+{
+  DoPointerMotion(x, y);
+  if (!m_pointerFocus)
+    return;
+
+  wl_client* client = wl_resource_get_client(m_pointerFocus->GetResource());
+  const uint32_t time = Milliseconds(Now());
+  for (wl_resource* pointer : m_pointers)
+  {
+    if (wl_resource_get_client(pointer) != client)
+      continue;
+    const uint32_t version = wl_resource_get_version(pointer);
+    // without a discrete step the client takes the value as pixels
+    if (version >= WL_POINTER_AXIS_SOURCE_SINCE_VERSION)
+      wl_pointer_send_axis_source(pointer, WL_POINTER_AXIS_SOURCE_FINGER);
+    wl_pointer_send_axis(pointer, time, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(pixels));
     if (version >= WL_POINTER_FRAME_SINCE_VERSION)
       wl_pointer_send_frame(pointer);
   }
