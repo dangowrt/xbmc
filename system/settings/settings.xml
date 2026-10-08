@@ -2951,6 +2951,16 @@
           </dependencies>
           <control type="toggle" />
         </setting>
+        <setting id="web.softwarecodecs" type="boolean" parent="web.enabled" label="40242" help="40243">
+          <level>1</level>
+          <default>false</default>
+          <dependencies>
+            <dependency type="enable">
+              <condition setting="web.enabled" operator="is">true</condition>
+            </dependency>
+          </dependencies>
+          <control type="toggle" />
+        </setting>
         <setting id="web.clientcommand" type="string" label="40235" help="40236">
           <level>2</level>
           <default>kodi-webview</default>

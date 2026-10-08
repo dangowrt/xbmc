@@ -340,6 +340,7 @@ public:
   static constexpr auto SETTING_WEATHER_ADDONSETTINGS = "weather.addonsettings";
   static constexpr auto SETTING_WEB_ENABLED = "web.enabled";
   static constexpr auto SETTING_WEB_PRELOAD = "web.preload";
+  static constexpr auto SETTING_WEB_SOFTWARECODECS = "web.softwarecodecs";
   static constexpr auto SETTING_WEB_CLIENTCOMMAND = "web.clientcommand";
   static constexpr auto SETTING_SERVICES_DEVICENAME = "services.devicename";
   static constexpr auto SETTING_SERVICES_DEVICEUUID = "services.deviceuuid";

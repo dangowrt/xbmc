@@ -25827,7 +25827,19 @@ msgctxt "#40241"
 msgid "Web apps"
 msgstr ""
 
-#empty strings from id 40242 to 40399
+#. Name of the setting that allows software video decoding in web pages
+#: system/settings/settings.xml
+msgctxt "#40242"
+msgid "Software video decoding in web pages"
+msgstr ""
+
+#. Help for setting Software video decoding in web pages
+#: system/settings/settings.xml
+msgctxt "#40243"
+msgid "Let web pages use video codecs this device can only decode in software. Off keeps pages to the codecs the hardware decodes, so a page offering several picks one of those."
+msgstr ""
+
+#empty strings from id 40244 to 40399
 
 # Video versions
 

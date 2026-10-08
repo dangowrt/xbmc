@@ -152,7 +152,9 @@ void CWebClientManager::Spawn()
   std::map<std::string, std::string> env{
       {"WPE_PLATFORM", "wayland"},
       {"XDG_DATA_HOME", CSpecialProtocol::TranslatePath("special://profile/webdata")},
-      {"XDG_CACHE_HOME", CSpecialProtocol::TranslatePath("special://temp/webcache")}};
+      {"XDG_CACHE_HOME", CSpecialProtocol::TranslatePath("special://temp/webcache")},
+      {"KODI_WEBVIEW_SOFTWARE_CODECS",
+       settings->GetBool(CSettings::SETTING_WEB_SOFTWARECODECS) ? "1" : "0"}};
   m_host->SpawnClient({command}, std::move(env));
 }
 
