@@ -8,10 +8,16 @@
 
 #include "WebClientManager.h"
 
+#include "FileItem.h"
+#include "FileItemList.h"
 #include "ServiceBroker.h"
+#include "filesystem/Directory.h"
+#include "filesystem/File.h"
 #include "filesystem/SpecialProtocol.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
+#include "utils/StringUtils.h"
+#include "utils/URIUtils.h"
 #include "utils/log.h"
 #include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
@@ -26,10 +32,14 @@
 #include "platform/linux/input/LibInputSettings.h"
 #endif
 
+#include <algorithm>
 #include <cmath>
 #include <mutex>
 #include <utility>
 
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <xf86drm.h>
 
 using namespace KODI::WEB;
@@ -37,6 +47,8 @@ using namespace KODI::WAYLANDHOST;
 
 namespace
 {
+
+constexpr const char* PROFILE_ROOT = "special://profile/webprofiles/";
 
 std::string FirstRenderNode()
 {
@@ -294,8 +306,64 @@ void CWebClientManager::OnWebClientReady()
     m_host->WebWantView(profile, {});
 }
 
+void CWebClientManager::ConfigureView(const std::string& profile)
+{
+  const std::string root = PROFILE_ROOT + profile + "/";
+  if (!XFILE::CDirectory::Exists(root))
+    return;
+
+  std::vector<uint8_t> userAgent;
+  if (XFILE::CFile().LoadFile(root + "user-agent", userAgent) > 0)
+  {
+    std::string value(userAgent.begin(), userAgent.end());
+    m_host->WebViewSetUserAgent(profile, StringUtils::Trim(value));
+  }
+  SendProfileFiles(profile, root + "scripts/", ".js", true);
+  SendProfileFiles(profile, root + "filters/", ".json", false);
+}
+
+void CWebClientManager::SendProfileFiles(const std::string& profile,
+                                         const std::string& path,
+                                         const std::string& extension,
+                                         bool scripts)
+{
+  CFileItemList items;
+  if (!XFILE::CDirectory::GetDirectory(path, items, extension, XFILE::DIR_FLAG_NO_FILE_DIRS))
+    return;
+
+  std::vector<std::string> files;
+  for (const auto& item : items)
+  {
+    if (!item->IsFolder())
+      files.push_back(item->GetPath());
+  }
+  std::sort(files.begin(), files.end());
+
+  for (const std::string& file : files)
+  {
+    const int fd = open(CSpecialProtocol::TranslatePath(file).c_str(), O_RDONLY | O_CLOEXEC);
+    struct stat st = {};
+    if (fd < 0 || fstat(fd, &st) != 0)
+    {
+      CLog::Log(LOGERROR, "CWebClientManager::{}: cannot read {}", __FUNCTION__, file);
+      if (fd >= 0)
+        close(fd);
+      continue;
+    }
+
+    const std::string name = URIUtils::GetFileName(file);
+    const auto size = static_cast<uint32_t>(st.st_size);
+    if (scripts)
+      m_host->WebViewAddUserScript(profile, name, fd, size);
+    else
+      m_host->WebViewAddContentFilter(profile, name, fd, size);
+  }
+}
+
 void CWebClientManager::OnWebViewCreated(const std::string& profile, CWaylandSurface& surface)
 {
+  ConfigureView(profile);
+
   std::unique_lock lock(m_lock);
   m_views[profile] = &surface;
   m_surfaces[&surface] = profile;
