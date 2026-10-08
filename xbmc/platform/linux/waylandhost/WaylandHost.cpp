@@ -20,6 +20,7 @@
 
 #include <drm_fourcc.h>
 #include <fcntl.h>
+#include <kodi-web-v1-server-protocol.h>
 #include <linux-dmabuf-v1-server-protocol.h>
 #include <presentation-time-server-protocol.h>
 #include <sys/eventfd.h>
@@ -49,6 +50,7 @@ constexpr uint32_t XDG_WM_BASE_VERSION = 1;
 constexpr uint32_t LINUX_DMABUF_VERSION = 4;
 constexpr uint32_t PRESENTATION_VERSION = 1;
 constexpr uint32_t TEXT_INPUT_VERSION = 1;
+constexpr uint32_t WEB_MANAGER_VERSION = 1;
 
 // evdev key codes map to xkb key codes with this offset (xkbcommon convention)
 constexpr uint32_t XKB_KEYCODE_OFFSET = 8;
@@ -660,6 +662,97 @@ const struct zwp_text_input_manager_v3_interface TEXT_INPUT_MANAGER_IMPL = {
     TextInputManagerGetTextInput,
 };
 
+// kodi_web_v1
+
+CWaylandHost::WebView* ViewOf(wl_resource* resource)
+{
+  return static_cast<CWaylandHost::WebView*>(wl_resource_get_user_data(resource));
+}
+
+void WebViewUrlChanged(wl_client*, wl_resource* resource, const char* url)
+{
+  if (auto* view = ViewOf(resource))
+    view->host->OnWebViewUrl(*view, url);
+}
+
+void WebViewTitleChanged(wl_client*, wl_resource* resource, const char* title)
+{
+  if (auto* view = ViewOf(resource))
+    view->host->OnWebViewTitle(*view, title);
+}
+
+void WebViewFavicon(wl_client*, wl_resource* resource, wl_resource* buffer)
+{
+  if (auto* view = ViewOf(resource))
+    view->host->OnWebViewFavicon(*view, buffer);
+}
+
+void WebViewLoadProgress(wl_client*, wl_resource* resource, uint32_t percent)
+{
+  if (auto* view = ViewOf(resource))
+    view->host->OnWebViewProgress(*view, percent);
+}
+
+void WebViewNavigationState(wl_client*,
+                            wl_resource* resource,
+                            uint32_t canGoBack,
+                            uint32_t canGoForward)
+{
+  if (auto* view = ViewOf(resource))
+    view->host->OnWebViewNavigationState(*view, canGoBack, canGoForward);
+}
+
+void WebViewError(wl_client*, wl_resource* resource, uint32_t code, const char* message)
+{
+  if (auto* view = ViewOf(resource))
+    view->host->OnWebViewError(*view, code, message);
+}
+
+const struct kodi_web_view_v1_interface WEB_VIEW_IMPL = {
+    DestroyResource,     WebViewUrlChanged,      WebViewTitleChanged, WebViewFavicon,
+    WebViewLoadProgress, WebViewNavigationState, WebViewError,
+};
+
+void WebViewResourceDestroyed(wl_resource* resource)
+{
+  if (auto* view = ViewOf(resource))
+    view->host->OnWebViewResourceDestroyed(*view);
+}
+
+void WebManagerCreateView(wl_client* client,
+                          wl_resource* resource,
+                          uint32_t id,
+                          const char* profile,
+                          wl_resource* surface)
+{
+  HostOf(resource).OnWebViewCreate(client, resource, id, profile, surface);
+}
+
+void WebManagerReady(wl_client*, wl_resource* resource)
+{
+  HostOf(resource).OnWebClientReady();
+}
+
+void WebManagerViewUnavailable(wl_client*,
+                               wl_resource* resource,
+                               const char* profile,
+                               const char* message)
+{
+  HostOf(resource).OnWebViewUnavailable(profile, message);
+}
+
+const struct kodi_web_manager_v1_interface WEB_MANAGER_IMPL = {
+    DestroyResource,
+    WebManagerCreateView,
+    WebManagerReady,
+    WebManagerViewUnavailable,
+};
+
+void WebManagerResourceDestroyed(wl_resource* resource)
+{
+  HostOf(resource).OnWebManagerUnbound(resource);
+}
+
 wl_resource* BindGlobal(wl_client* client,
                         const wl_interface& interface,
                         uint32_t version,
@@ -903,6 +996,8 @@ bool CWaylandHost::CreateGlobals()
                                        this, BindPresentation));
   m_globals.push_back(wl_global_create(m_display, &zwp_text_input_manager_v3_interface,
                                        TEXT_INPUT_VERSION, this, BindTextInputManager));
+  m_globals.push_back(wl_global_create(m_display, &kodi_web_manager_v1_interface,
+                                       WEB_MANAGER_VERSION, this, BindWebManager));
 
   return std::all_of(m_globals.begin(), m_globals.end(), [](wl_global* g) { return g; });
 }
@@ -922,6 +1017,8 @@ void CWaylandHost::DestroyAll()
       waitpid(client.pid, nullptr, 0);
   }
   m_clients.clear();
+  m_views.clear();
+  m_webManager = nullptr;
 
   for (wl_global* global : m_globals)
   {
@@ -1138,6 +1235,244 @@ void CWaylandHost::BindTextInputManager(wl_client* client,
              &TEXT_INPUT_MANAGER_IMPL, data);
 }
 
+void CWaylandHost::BindWebManager(wl_client* client, void* data, uint32_t version, uint32_t id)
+{
+  wl_resource* resource = BindGlobal(client, kodi_web_manager_v1_interface, version,
+                                     WEB_MANAGER_VERSION, id, &WEB_MANAGER_IMPL, data);
+  if (!resource)
+    return;
+
+  wl_resource_set_destructor(resource, WebManagerResourceDestroyed);
+  static_cast<CWaylandHost*>(data)->OnWebManagerBound(resource);
+}
+
+void CWaylandHost::OnWebManagerBound(wl_resource* manager)
+{
+  if (m_webManager)
+    CLog::Log(LOGWARNING, "CWaylandHost::{}: a second web client bound the manager", __FUNCTION__);
+  m_webManager = manager;
+}
+
+void CWaylandHost::OnWebManagerUnbound(wl_resource* manager)
+{
+  if (m_webManager == manager)
+    m_webManager = nullptr;
+}
+
+void CWaylandHost::OnWebClientReady()
+{
+  CLog::Log(LOGINFO, "CWaylandHost::{}: the web client is ready", __FUNCTION__);
+  m_observer.OnWebClientReady();
+}
+
+void CWaylandHost::OnWebViewCreate(wl_client* client,
+                                   wl_resource* manager,
+                                   uint32_t id,
+                                   const char* profile,
+                                   wl_resource* surfaceResource)
+{
+  if (FindWebView(profile))
+  {
+    wl_resource_post_error(manager, KODI_WEB_MANAGER_V1_ERROR_DUPLICATE_PROFILE,
+                           "a view for profile %s exists", profile);
+    return;
+  }
+
+  auto* surface = SurfaceOf(surfaceResource);
+  if (!surface || WebViewOf(surface))
+  {
+    wl_resource_post_error(manager, KODI_WEB_MANAGER_V1_ERROR_INVALID_SURFACE,
+                           "the surface cannot take the view role");
+    return;
+  }
+
+  wl_resource* resource =
+      wl_resource_create(client, &kodi_web_view_v1_interface, wl_resource_get_version(manager), id);
+  if (!resource)
+  {
+    wl_client_post_no_memory(client);
+    return;
+  }
+
+  m_views.push_back({this, resource, profile, surface});
+  wl_resource_set_implementation(resource, &WEB_VIEW_IMPL, &m_views.back(),
+                                 WebViewResourceDestroyed);
+  CLog::Log(LOGINFO, "CWaylandHost::{}: view for profile \"{}\" created", __FUNCTION__, profile);
+  m_observer.OnWebViewCreated(profile, *surface);
+}
+
+void CWaylandHost::OnWebViewUnavailable(const char* profile, const char* message)
+{
+  CLog::Log(LOGWARNING, "CWaylandHost::{}: no view for profile \"{}\": {}", __FUNCTION__, profile,
+            message);
+  m_observer.OnWebViewUnavailable(profile, message);
+}
+
+void CWaylandHost::OnWebViewUrl(WebView& view, const char* url)
+{
+  m_observer.OnWebViewUrl(view.profile, url);
+}
+
+void CWaylandHost::OnWebViewTitle(WebView& view, const char* title)
+{
+  m_observer.OnWebViewTitle(view.profile, title);
+}
+
+void CWaylandHost::OnWebViewFavicon(WebView& view, wl_resource* buffer)
+{
+  wl_shm_buffer* shm = wl_shm_buffer_get(buffer);
+  CLog::Log(LOGDEBUG, "CWaylandHost::{}: profile \"{}\" icon {}x{}", __FUNCTION__, view.profile,
+            shm ? wl_shm_buffer_get_width(shm) : 0, shm ? wl_shm_buffer_get_height(shm) : 0);
+  // the icon pixels are not consumed yet; give the buffer straight back
+  wl_buffer_send_release(buffer);
+}
+
+void CWaylandHost::OnWebViewProgress(WebView& view, uint32_t percent)
+{
+  m_observer.OnWebViewProgress(view.profile, percent);
+}
+
+void CWaylandHost::OnWebViewNavigationState(WebView& view,
+                                            uint32_t canGoBack,
+                                            uint32_t canGoForward)
+{
+  m_observer.OnWebViewNavigationState(view.profile, canGoBack != 0, canGoForward != 0);
+}
+
+void CWaylandHost::OnWebViewError(WebView& view, uint32_t code, const char* message)
+{
+  CLog::Log(LOGERROR, "CWaylandHost::{}: view for profile \"{}\" failed with code {}: {}",
+            __FUNCTION__, view.profile, code, message);
+  m_observer.OnWebViewError(view.profile, code, message);
+}
+
+void CWaylandHost::OnWebViewResourceDestroyed(WebView& view)
+{
+  const std::string profile = view.profile;
+  m_views.remove_if([&view](const WebView& entry) { return &entry == &view; });
+  m_observer.OnWebViewDestroyed(profile);
+}
+
+CWaylandHost::WebView* CWaylandHost::FindWebView(const std::string& profile)
+{
+  auto it = std::find_if(m_views.begin(), m_views.end(),
+                         [&profile](const WebView& view) { return view.profile == profile; });
+  return it == m_views.end() ? nullptr : &*it;
+}
+
+CWaylandHost::WebView* CWaylandHost::WebViewOf(const CWaylandSurface* surface)
+{
+  auto it = std::find_if(m_views.begin(), m_views.end(),
+                         [surface](const WebView& view) { return view.surface == surface; });
+  return it == m_views.end() ? nullptr : &*it;
+}
+
+void CWaylandHost::WebWantView(std::string profile, std::string uplink)
+{
+  Post(
+      [this, profile = std::move(profile), uplink = std::move(uplink)]()
+      {
+        if (m_webManager)
+          kodi_web_manager_v1_send_want_view(m_webManager, profile.c_str(), uplink.c_str());
+        else
+          m_observer.OnWebViewUnavailable(profile, "no web client is connected");
+      });
+}
+
+void CWaylandHost::WebViewLoadUrl(std::string profile, std::string url)
+{
+  Post(
+      [this, profile = std::move(profile), url = std::move(url)]()
+      {
+        if (auto* view = FindWebView(profile))
+          kodi_web_view_v1_send_load_url(view->resource, url.c_str());
+      });
+}
+
+void CWaylandHost::WebViewNavigate(std::string profile, WebNavigation action)
+{
+  Post(
+      [this, profile = std::move(profile), action]()
+      {
+        if (auto* view = FindWebView(profile))
+          kodi_web_view_v1_send_navigate(view->resource, static_cast<uint32_t>(action));
+      });
+}
+
+void CWaylandHost::WebViewSetActive(std::string profile, bool active)
+{
+  Post(
+      [this, profile = std::move(profile), active]()
+      {
+        if (auto* view = FindWebView(profile))
+          DoWebViewSetActive(*view, active);
+      });
+}
+
+void CWaylandHost::DoWebViewSetActive(WebView& view, bool active)
+{
+  view.active = active;
+  kodi_web_view_v1_send_set_active(view.resource, active ? 1 : 0);
+  if (!view.surface)
+    return;
+
+  if (active && view.surface->IsMapped())
+    SetKeyboardFocus(view.surface);
+  else if (!active && m_keyboardFocus == view.surface)
+    SetKeyboardFocus(nullptr);
+}
+
+void CWaylandHost::WebViewClose(std::string profile)
+{
+  Post(
+      [this, profile = std::move(profile)]()
+      {
+        if (auto* view = FindWebView(profile))
+          kodi_web_view_v1_send_close(view->resource);
+      });
+}
+
+void CWaylandHost::WebViewSetUserAgent(std::string profile, std::string userAgent)
+{
+  Post(
+      [this, profile = std::move(profile), userAgent = std::move(userAgent)]()
+      {
+        if (auto* view = FindWebView(profile))
+          kodi_web_view_v1_send_set_user_agent(view->resource, userAgent.c_str());
+      });
+}
+
+void CWaylandHost::WebViewAddUserScript(std::string profile,
+                                        std::string name,
+                                        int fd,
+                                        uint32_t size)
+{
+  Post([this, profile = std::move(profile), name = std::move(name), fd, size]()
+       { SendWebViewFile(profile, name, fd, size, true); });
+}
+
+void CWaylandHost::WebViewAddContentFilter(std::string profile,
+                                           std::string name,
+                                           int fd,
+                                           uint32_t size)
+{
+  Post([this, profile = std::move(profile), name = std::move(name), fd, size]()
+       { SendWebViewFile(profile, name, fd, size, false); });
+}
+
+void CWaylandHost::SendWebViewFile(
+    const std::string& profile, const std::string& name, int fd, uint32_t size, bool script)
+{
+  if (auto* view = FindWebView(profile))
+  {
+    if (script)
+      kodi_web_view_v1_send_add_user_script(view->resource, name.c_str(), fd, size);
+    else
+      kodi_web_view_v1_send_add_content_filter(view->resource, name.c_str(), fd, size);
+  }
+  close(fd);
+}
+
 void CWaylandHost::SendDmabufFeedback(wl_resource* feedback)
 {
   zwp_linux_dmabuf_feedback_v1_send_format_table(feedback, m_formatTableFd, m_formatTableSize);
@@ -1220,6 +1555,11 @@ void CWaylandHost::OnSurfaceCreated(CWaylandSurface* surface)
 void CWaylandHost::OnSurfaceDestroyed(CWaylandSurface* surface)
 {
   m_surfaces.remove(surface);
+  for (WebView& view : m_views)
+  {
+    if (view.surface == surface)
+      view.surface = nullptr;
+  }
   if (m_keyboardFocus == surface)
     m_keyboardFocus = nullptr;
   if (m_pointerFocus == surface)
@@ -1228,7 +1568,9 @@ void CWaylandHost::OnSurfaceDestroyed(CWaylandSurface* surface)
 
 void CWaylandHost::OnSurfaceMapped(CWaylandSurface& surface)
 {
-  SetKeyboardFocus(&surface);
+  const WebView* view = WebViewOf(&surface);
+  if (!view || view->active)
+    SetKeyboardFocus(&surface);
   m_observer.OnSurfaceMapped(surface);
 }
 

@@ -58,6 +58,31 @@ public:
   virtual void OnSurfaceFrame(CWaylandSurface& surface, std::shared_ptr<CWaylandBuffer> buffer) = 0;
 
   virtual void OnClientExited(pid_t pid, int status) = 0;
+
+  // kodi_web_v1, what the web client reports; an observer may ignore any of it
+  virtual void OnWebClientReady() {}
+  virtual void OnWebViewCreated(const std::string& profile, CWaylandSurface& surface) {}
+  virtual void OnWebViewUnavailable(const std::string& profile, const std::string& message) {}
+  virtual void OnWebViewUrl(const std::string& profile, const std::string& url) {}
+  virtual void OnWebViewTitle(const std::string& profile, const std::string& title) {}
+  virtual void OnWebViewProgress(const std::string& profile, uint32_t percent) {}
+  virtual void OnWebViewNavigationState(const std::string& profile,
+                                        bool canGoBack,
+                                        bool canGoForward)
+  {
+  }
+  virtual void OnWebViewError(const std::string& profile, uint32_t code, const std::string& message)
+  {
+  }
+  virtual void OnWebViewDestroyed(const std::string& profile) {}
+};
+
+enum class WebNavigation
+{
+  BACK,
+  FORWARD,
+  RELOAD,
+  STOP,
 };
 
 struct WaylandHostConfig
@@ -109,8 +134,48 @@ public:
    */
   void FrameDone();
 
+  // kodi_web_v1, what Kodi asks of the web client; any thread
+  void WebWantView(std::string profile, std::string uplink);
+  void WebViewLoadUrl(std::string profile, std::string url);
+  void WebViewNavigate(std::string profile, WebNavigation action);
+  void WebViewSetActive(std::string profile, bool active);
+  void WebViewClose(std::string profile);
+  void WebViewSetUserAgent(std::string profile, std::string userAgent);
+
+  /*!
+   * \brief Hand the client a script or filter; the host owns the descriptor
+   * from here on and closes it once sent
+   */
+  void WebViewAddUserScript(std::string profile, std::string name, int fd, uint32_t size);
+  void WebViewAddContentFilter(std::string profile, std::string name, int fd, uint32_t size);
+
+  struct WebView
+  {
+    CWaylandHost* host{nullptr};
+    wl_resource* resource{nullptr};
+    std::string profile;
+    CWaylandSurface* surface{nullptr};
+    bool active{false};
+  };
+
   // host thread only
   wl_display* GetDisplay() const { return m_display; }
+  void OnWebManagerBound(wl_resource* manager);
+  void OnWebManagerUnbound(wl_resource* manager);
+  void OnWebClientReady();
+  void OnWebViewCreate(wl_client* client,
+                       wl_resource* manager,
+                       uint32_t id,
+                       const char* profile,
+                       wl_resource* surfaceResource);
+  void OnWebViewUnavailable(const char* profile, const char* message);
+  void OnWebViewUrl(WebView& view, const char* url);
+  void OnWebViewTitle(WebView& view, const char* title);
+  void OnWebViewFavicon(WebView& view, wl_resource* buffer);
+  void OnWebViewProgress(WebView& view, uint32_t percent);
+  void OnWebViewNavigationState(WebView& view, uint32_t canGoBack, uint32_t canGoForward);
+  void OnWebViewError(WebView& view, uint32_t code, const char* message);
+  void OnWebViewResourceDestroyed(WebView& view);
   const WaylandHostConfig& GetConfig() const { return m_config; }
   uint32_t NextSerial();
   void OnSurfaceCreated(CWaylandSurface* surface);
@@ -172,6 +237,13 @@ private:
   static void BindLinuxDmabuf(wl_client* client, void* data, uint32_t version, uint32_t id);
   static void BindPresentation(wl_client* client, void* data, uint32_t version, uint32_t id);
   static void BindTextInputManager(wl_client* client, void* data, uint32_t version, uint32_t id);
+  static void BindWebManager(wl_client* client, void* data, uint32_t version, uint32_t id);
+
+  WebView* FindWebView(const std::string& profile);
+  WebView* WebViewOf(const CWaylandSurface* surface);
+  void DoWebViewSetActive(WebView& view, bool active);
+  void SendWebViewFile(
+      const std::string& profile, const std::string& name, int fd, uint32_t size, bool script);
 
   IWaylandHostObserver& m_observer;
   const WaylandHostConfig m_config;
@@ -187,6 +259,8 @@ private:
 
   std::list<Client> m_clients;
   std::list<CWaylandSurface*> m_surfaces;
+  wl_resource* m_webManager{nullptr};
+  std::list<WebView> m_views;
   std::list<wl_resource*> m_keyboards;
   std::list<wl_resource*> m_pointers;
   CWaylandSurface* m_keyboardFocus{nullptr};
