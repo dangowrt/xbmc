@@ -16,7 +16,7 @@ namespace WEB
 //! \brief Name under which the web player is registered with the player factory
 constexpr const char* PLAYER_NAME = "WebPlayer";
 
-//! \brief Item property naming the web profile a page opens in, or "default"
+//! \brief Item property naming the web profile a page opens in; a web add-on's id or "default"
 constexpr const char* PROPERTY_PROFILE = "web.profile";
 
 //! \brief The profile of plain browsing

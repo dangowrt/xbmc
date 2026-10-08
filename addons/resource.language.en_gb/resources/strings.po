@@ -25821,7 +25821,13 @@ msgctxt "#40240"
 msgid "Keep the web client running from start-up so that pages open at once. Turn off to start it on first use and save memory."
 msgstr ""
 
-#empty strings from id 40241 to 40399
+#. Add-on type: a web application shown through Kodi's web view
+#: xbmc/addons/addoninfo/AddonInfo.cpp
+msgctxt "#40241"
+msgid "Web apps"
+msgstr ""
+
+#empty strings from id 40242 to 40399
 
 # Video versions
 
