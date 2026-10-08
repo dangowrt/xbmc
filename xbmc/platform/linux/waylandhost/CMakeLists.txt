@@ -1,8 +1,9 @@
 if(TARGET ${APP_NAME_LC}::WaylandServer)
-  set(PROTOCOLS linux-dmabuf-v1:stable/linux-dmabuf/linux-dmabuf-v1.xml
-                presentation-time:stable/presentation-time/presentation-time.xml
-                text-input-unstable-v3:unstable/text-input/text-input-unstable-v3.xml
-                xdg-shell:stable/xdg-shell/xdg-shell.xml)
+  set(PROTOCOLS linux-dmabuf-v1:${WAYLAND_PROTOCOLS_DIR}/stable/linux-dmabuf/linux-dmabuf-v1.xml
+                presentation-time:${WAYLAND_PROTOCOLS_DIR}/stable/presentation-time/presentation-time.xml
+                text-input-unstable-v3:${WAYLAND_PROTOCOLS_DIR}/unstable/text-input/text-input-unstable-v3.xml
+                xdg-shell:${WAYLAND_PROTOCOLS_DIR}/stable/xdg-shell/xdg-shell.xml
+                kodi-web-v1:${CMAKE_CURRENT_SOURCE_DIR}/protocol/kodi-web-v1.xml)
 
   set(SOURCES WaylandBuffer.cpp
               WaylandHost.cpp
@@ -16,7 +17,6 @@ if(TARGET ${APP_NAME_LC}::WaylandServer)
     string(REPLACE ":" ";" protocol ${protocol})
     list(GET protocol 0 name)
     list(GET protocol 1 xml)
-    set(xml ${WAYLAND_PROTOCOLS_DIR}/${xml})
     set(header ${CMAKE_CURRENT_BINARY_DIR}/${name}-server-protocol.h)
     set(code ${CMAKE_CURRENT_BINARY_DIR}/${name}-protocol.c)
     add_custom_command(OUTPUT ${header}
