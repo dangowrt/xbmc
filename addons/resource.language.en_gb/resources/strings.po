@@ -6363,7 +6363,12 @@ msgctxt "#12906"
 msgid "Fullscreen game"
 msgstr ""
 
-#empty strings from id 12907 to 12998
+#: xbmc/guilib/WindowIDs.h
+msgctxt "#12907"
+msgid "Fullscreen web"
+msgstr ""
+
+#empty strings from id 12908 to 12998
 
 #: xbmc/guilib/WindowIDs.h
 msgctxt "#12999"

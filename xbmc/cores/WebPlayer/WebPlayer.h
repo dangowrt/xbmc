@@ -13,9 +13,12 @@
 #include "cores/VideoPlayer/DVDClock.h"
 #include "cores/VideoPlayer/VideoRenderers/RenderManager.h"
 #include "guilib/DispResource.h"
+#include "input/keyboard/interfaces/IKeyboardEventHandler.h"
+#include "input/mouse/interfaces/IMouseDriverHandler.h"
 
 #include <atomic>
 #include <memory>
+#include <set>
 
 class CFileItem;
 class CProcessInfo;
@@ -31,12 +34,15 @@ class CWebVideoBufferPool;
  * \brief Plays a web page: the view the client manager provides for the
  * item's profile loads the URL, and the frames the client commits go
  * through Kodi's video renderers, so the GUI composes over them like over
- * any other video.
+ * any other video. While the web window is up, keys the keymap does not
+ * claim and the pointer go to the client.
  */
 class CWebPlayer : public IPlayer,
                    public IRenderLoop,
                    public IRenderMsg,
-                   public IWebViewObserver
+                   public IWebViewObserver,
+                   public KEYBOARD::IKeyboardEventHandler,
+                   public MOUSE::IMouseDriverHandler
 {
 public:
   explicit CWebPlayer(IPlayerCallback& callback);
@@ -87,6 +93,14 @@ public:
                       uint32_t code,
                       const std::string& message) override;
 
+  // implementation of IKeyboardEventHandler
+  bool OnKeyboardEvent(const XBMC_keysym& keysym, const CKey& key, bool pressed) override;
+
+  // implementation of IMouseDriverHandler
+  bool OnPosition(int x, int y) override;
+  bool OnButtonPress(MOUSE::BUTTON_ID button) override;
+  void OnButtonRelease(MOUSE::BUTTON_ID button) override;
+
 protected:
   // implementation of IRenderMsg
   void VideoParamsChange() override {}
@@ -99,6 +113,8 @@ protected:
 
 private:
   bool ConfigureRenderer(const VideoPicture& picture);
+  void UpdateInputRouting();
+  void UpdateVisibility();
   void StopFromClient();
 
   std::unique_ptr<CProcessInfo> m_processInfo;
@@ -115,6 +131,11 @@ private:
   volatile std::atomic_bool m_stop{false};
   bool m_configured{false};
   float m_fps{0.0f};
+  bool m_inputActive{false};
+  bool m_shown{false};
+  std::set<uint32_t> m_pressedKeys;
+  int m_pointerX{-1};
+  int m_pointerY{-1};
 };
 
 } // namespace WEB

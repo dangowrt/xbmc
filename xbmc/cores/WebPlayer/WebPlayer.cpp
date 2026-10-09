@@ -16,6 +16,14 @@
 #include "cores/DataCacheCore.h"
 #include "cores/VideoPlayer/Interface/TimingConstants.h"
 #include "cores/VideoPlayer/Process/ProcessInfo.h"
+#include "guilib/GUIComponent.h"
+#include "guilib/GUIWindowManager.h"
+#include "guilib/WindowIDs.h"
+#include "input/InputManager.h"
+#include "input/actions/Action.h"
+#include "input/actions/ActionIDs.h"
+#include "input/keyboard/Key.h"
+#include "input/keyboard/XBMC_keyboard.h"
 #include "messaging/ApplicationMessenger.h"
 #include "utils/log.h"
 #include "windowing/GraphicContext.h"
@@ -24,6 +32,8 @@
 #include "platform/linux/waylandhost/WaylandBuffer.h"
 #include "platform/linux/waylandhost/WaylandSurface.h"
 
+#include <linux/input-event-codes.h>
+
 using namespace KODI::WEB;
 using namespace KODI::WAYLANDHOST;
 
@@ -31,6 +41,30 @@ namespace
 {
 
 constexpr int RENDER_BUFFERS = 3;
+
+// The web window's keymap section claims keys for Kodi outright. Of the
+// others, a key bound globally to a Kodi command or to the volume stays
+// with Kodi as well, unless it types a character into the page.
+bool IsKodiKey(const XBMC_keysym& keysym, const CKey& key)
+{
+  CInputManager& input = CServiceBroker::GetInputManager();
+  if (input.GetAction(WINDOW_FULLSCREEN_WEB, key, false).GetID() != ACTION_NONE)
+    return true;
+
+  if (keysym.unicode >= 0x20 && keysym.unicode != 0x7f)
+    return false;
+
+  switch (input.GetAction(WINDOW_FULLSCREEN_WEB, key, true).GetID())
+  {
+    case ACTION_BUILT_IN_FUNCTION:
+    case ACTION_VOLUME_UP:
+    case ACTION_VOLUME_DOWN:
+    case ACTION_MUTE:
+      return true;
+    default:
+      return false;
+  }
+}
 
 } // unnamed namespace
 
@@ -60,6 +94,7 @@ bool CWebPlayer::OpenFile(const CFileItem& file, const CPlayerOptions& options)
   m_options = options;
   m_stop = false;
   m_configured = false;
+  m_shown = false;
   m_surface = nullptr;
   m_url = file.GetDynPath();
   m_profile = file.GetProperty(PROPERTY_PROFILE).asString(DEFAULT_PROFILE);
@@ -84,6 +119,8 @@ bool CWebPlayer::OpenFile(const CFileItem& file, const CPlayerOptions& options)
   }
 
   CServiceBroker::GetWinSystem()->RegisterRenderLoop(this);
+  CServiceBroker::GetInputManager().RegisterKeyboardEventHandler(this);
+  CServiceBroker::GetInputManager().RegisterMouseDriverHandler(this);
   m_playing = true;
   m_callback.OnPlayBackStarted(*m_item);
   return true;
@@ -105,6 +142,10 @@ bool CWebPlayer::CloseFile(bool reopen)
   m_surface = nullptr;
   m_manager.reset();
 
+  CServiceBroker::GetInputManager().UnregisterKeyboardEventHandler(this);
+  CServiceBroker::GetInputManager().UnregisterMouseDriverHandler(this);
+  m_inputActive = false;
+  m_pressedKeys.clear();
   CServiceBroker::GetWinSystem()->UnregisterRenderLoop(this);
   m_renderManager.UnInit();
   m_pool.reset();
@@ -189,6 +230,130 @@ void CWebPlayer::SetVideoSettings(CVideoSettings& settings)
 void CWebPlayer::FrameMove()
 {
   m_renderManager.FrameMove();
+  UpdateInputRouting();
+  UpdateVisibility();
+}
+
+void CWebPlayer::UpdateVisibility()
+{
+  const bool shown =
+      m_configured && m_manager &&
+      CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow() == WINDOW_FULLSCREEN_WEB;
+  if (shown == m_shown)
+    return;
+
+  m_shown = shown;
+  m_manager->SetActive(m_profile, shown);
+}
+
+void CWebPlayer::UpdateInputRouting()
+{
+  const bool active = m_configured && m_manager &&
+                      CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindowOrDialog() ==
+                          WINDOW_FULLSCREEN_WEB;
+  if (active == m_inputActive)
+    return;
+
+  m_inputActive = active;
+  m_pointerX = -1;
+  m_pointerY = -1;
+  if (active)
+    return;
+
+  // a key still held when Kodi takes the input back must not stay down
+  // for the client
+  for (uint32_t scancode : m_pressedKeys)
+    m_manager->GetHost()->KeyboardKey(scancode, false);
+  m_pressedKeys.clear();
+}
+
+bool CWebPlayer::OnKeyboardEvent(const XBMC_keysym& keysym, const CKey& key, bool pressed)
+{
+  if (!m_inputActive || IsKodiKey(keysym, key))
+    return false;
+
+  if (pressed)
+    m_pressedKeys.insert(keysym.scancode);
+  else
+    m_pressedKeys.erase(keysym.scancode);
+  m_manager->GetHost()->KeyboardKey(keysym.scancode, pressed);
+  return true;
+}
+
+bool CWebPlayer::OnPosition(int x, int y)
+{
+  if (!m_inputActive)
+    return false;
+
+  // an air mouse lying still keeps reporting the same position
+  if (x == m_pointerX && y == m_pointerY)
+    return false;
+  m_pointerX = x;
+  m_pointerY = y;
+
+  m_manager->GetHost()->PointerMotion(x, y);
+  // Kodi keeps drawing the pointer, so the event goes on to the GUI
+  return false;
+}
+
+bool CWebPlayer::OnButtonPress(MOUSE::BUTTON_ID button)
+{
+  if (!m_inputActive)
+    return false;
+
+  switch (button)
+  {
+    case MOUSE::BUTTON_ID::LEFT:
+      m_manager->GetHost()->PointerButton(BTN_LEFT, true);
+      return true;
+    case MOUSE::BUTTON_ID::RIGHT:
+      m_manager->GetHost()->PointerButton(BTN_RIGHT, true);
+      return true;
+    case MOUSE::BUTTON_ID::MIDDLE:
+      m_manager->GetHost()->PointerButton(BTN_MIDDLE, true);
+      return true;
+    case MOUSE::BUTTON_ID::BUTTON4:
+      m_manager->GetHost()->PointerButton(BTN_SIDE, true);
+      return true;
+    case MOUSE::BUTTON_ID::BUTTON5:
+      m_manager->GetHost()->PointerButton(BTN_EXTRA, true);
+      return true;
+    case MOUSE::BUTTON_ID::WHEEL_UP:
+      m_manager->GetHost()->PointerAxis(-120);
+      return true;
+    case MOUSE::BUTTON_ID::WHEEL_DOWN:
+      m_manager->GetHost()->PointerAxis(120);
+      return true;
+    default:
+      return false;
+  }
+}
+
+void CWebPlayer::OnButtonRelease(MOUSE::BUTTON_ID button)
+{
+  if (!m_inputActive)
+    return;
+
+  switch (button)
+  {
+    case MOUSE::BUTTON_ID::LEFT:
+      m_manager->GetHost()->PointerButton(BTN_LEFT, false);
+      break;
+    case MOUSE::BUTTON_ID::RIGHT:
+      m_manager->GetHost()->PointerButton(BTN_RIGHT, false);
+      break;
+    case MOUSE::BUTTON_ID::MIDDLE:
+      m_manager->GetHost()->PointerButton(BTN_MIDDLE, false);
+      break;
+    case MOUSE::BUTTON_ID::BUTTON4:
+      m_manager->GetHost()->PointerButton(BTN_SIDE, false);
+      break;
+    case MOUSE::BUTTON_ID::BUTTON5:
+      m_manager->GetHost()->PointerButton(BTN_EXTRA, false);
+      break;
+    default:
+      break;
+  }
 }
 
 void CWebPlayer::OnWebViewAvailable(const std::string& profile, CWaylandSurface& surface)

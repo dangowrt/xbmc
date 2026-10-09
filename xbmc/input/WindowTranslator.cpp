@@ -147,6 +147,7 @@ const CWindowTranslator::WindowMapByName CWindowTranslator::WindowMappingByName 
     {"fullscreenradioinput", WINDOW_FULLSCREEN_RADIO_INPUT},
 
     {"fullscreengame", WINDOW_FULLSCREEN_GAME},
+    {"fullscreenweb", WINDOW_FULLSCREEN_WEB},
     {"visualisation", WINDOW_VISUALISATION},
     {"slideshow", WINDOW_SLIDESHOW},
     {"weather", WINDOW_WEATHER},

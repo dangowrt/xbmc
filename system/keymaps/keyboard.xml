@@ -479,6 +479,13 @@
       <escape>OSD</escape>
     </keyboard>
   </FullscreenGame>
+  <FullscreenWeb>
+    <keyboard>
+      <escape>OSD</escape>
+      <menu>OSD</menu>
+      <home>ActivateWindow(Home)</home>
+    </keyboard>
+  </FullscreenWeb>
   <GameOSD>
     <keyboard>
       <m>OSD</m>
