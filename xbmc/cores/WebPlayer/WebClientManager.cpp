@@ -196,6 +196,8 @@ bool CWebClientManager::RequestView(const std::string& profile, IWebViewObserver
   std::unique_lock lock(m_lock);
   m_observer = &observer;
   m_observedProfile = profile;
+  m_shown = ViewState{};
+  m_shown.profile = profile;
   m_wantPending = false;
 
   const auto view = m_views.find(profile);
@@ -233,6 +235,16 @@ void CWebClientManager::ReleaseView(IWebViewObserver& observer)
     m_observer = nullptr;
     m_wantPending = false;
   }
+}
+
+bool CWebClientManager::GetShownView(ViewState& state) const
+{
+  std::unique_lock lock(m_lock);
+  if (!m_observer)
+    return false;
+
+  state = m_shown;
+  return true;
 }
 
 void CWebClientManager::LoadUrl(const std::string& profile, const std::string& url)
@@ -464,6 +476,8 @@ void CWebClientManager::OnWebViewUrl(const std::string& profile, const std::stri
 {
   std::unique_lock lock(m_lock);
   IWebViewObserver* observer = ObserverOf(profile);
+  if (observer)
+    m_shown.url = url;
   lock.unlock();
   if (observer)
     observer->OnWebViewUrl(profile, url);
@@ -473,6 +487,8 @@ void CWebClientManager::OnWebViewTitle(const std::string& profile, const std::st
 {
   std::unique_lock lock(m_lock);
   IWebViewObserver* observer = ObserverOf(profile);
+  if (observer)
+    m_shown.title = title;
   lock.unlock();
   if (observer)
     observer->OnWebViewTitle(profile, title);
@@ -493,6 +509,11 @@ void CWebClientManager::OnWebViewNavigationState(const std::string& profile,
 {
   std::unique_lock lock(m_lock);
   IWebViewObserver* observer = ObserverOf(profile);
+  if (observer)
+  {
+    m_shown.canGoBack = canGoBack;
+    m_shown.canGoForward = canGoForward;
+  }
   lock.unlock();
   if (observer)
     observer->OnWebViewNavigationState(profile, canGoBack, canGoForward);

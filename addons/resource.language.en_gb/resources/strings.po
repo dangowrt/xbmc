@@ -25839,7 +25839,25 @@ msgctxt "#40243"
 msgid "Let web pages use video codecs this device can only decode in software. Off keeps pages to the codecs the hardware decodes, so a page offering several picks one of those."
 msgstr ""
 
-#empty strings from id 40244 to 40399
+#. Web OSD button going back in the page's history
+#: addons/skin.estuary/xml/DialogWebOSD.xml
+msgctxt "#40244"
+msgid "Back"
+msgstr ""
+
+#. Web OSD button going forward in the page's history
+#: addons/skin.estuary/xml/DialogWebOSD.xml
+msgctxt "#40245"
+msgid "Forward"
+msgstr ""
+
+#. Web OSD button loading the page again
+#: addons/skin.estuary/xml/DialogWebOSD.xml
+msgctxt "#40246"
+msgid "Reload"
+msgstr ""
+
+#empty strings from id 40247 to 40399
 
 # Video versions
 

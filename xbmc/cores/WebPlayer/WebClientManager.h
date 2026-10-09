@@ -69,6 +69,15 @@ public:
     FAILED,
   };
 
+  struct ViewState
+  {
+    std::string profile;
+    std::string url;
+    std::string title;
+    bool canGoBack{false};
+    bool canGoForward{false};
+  };
+
   CWebClientManager() = default;
   ~CWebClientManager() override;
 
@@ -85,6 +94,11 @@ public:
    */
   bool RequestView(const std::string& profile, IWebViewObserver& observer);
   void ReleaseView(IWebViewObserver& observer);
+
+  /*!
+   * \brief What the view a player asked for reports; false without one
+   */
+  bool GetShownView(ViewState& state) const;
 
   void LoadUrl(const std::string& profile, const std::string& url);
   void Navigate(const std::string& profile, WAYLANDHOST::WebNavigation action);
@@ -140,6 +154,7 @@ private:
   bool m_respawned{false};
   IWebViewObserver* m_observer{nullptr};
   std::string m_observedProfile;
+  ViewState m_shown;
   bool m_wantPending{false};
   std::map<std::string, WAYLANDHOST::CWaylandSurface*> m_views;
   std::map<WAYLANDHOST::CWaylandSurface*, std::string> m_surfaces;

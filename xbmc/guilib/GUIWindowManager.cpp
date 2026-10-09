@@ -148,6 +148,7 @@
 #include "cores/RetroPlayer/guiwindows/GameWindowFullScreen.h"
 #if defined(HAVE_WAYLAND_SERVER)
 #include "cores/WebPlayer/GUIDialogWebKeyboard.h"
+#include "cores/WebPlayer/GUIDialogWebOSD.h"
 #include "cores/WebPlayer/GUIWindowFullScreenWeb.h"
 #endif
 #include "games/agents/windows/GUIAgentWindow.h"
@@ -372,6 +373,7 @@ void CGUIWindowManager::CreateWindows()
 #if defined(HAVE_WAYLAND_SERVER)
   Add(new WEB::CGUIWindowFullScreenWeb);
   Add(new WEB::CGUIDialogWebKeyboard);
+  Add(new WEB::CGUIDialogWebOSD);
 #endif
 }
 
@@ -507,6 +509,7 @@ bool CGUIWindowManager::DestroyWindows()
     DestroyWindow(WINDOW_FULLSCREEN_GAME);
     DestroyWindow(WINDOW_FULLSCREEN_WEB);
     DestroyWindow(WINDOW_DIALOG_WEB_KEYBOARD);
+    DestroyWindow(WINDOW_DIALOG_WEB_OSD);
 
     Remove(WINDOW_SETTINGS_SERVICE);
     Remove(WINDOW_SETTINGS_MYPVR);
