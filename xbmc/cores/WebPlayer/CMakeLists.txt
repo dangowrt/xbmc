@@ -1,9 +1,11 @@
 if(TARGET ${APP_NAME_LC}::WaylandServer)
-  set(SOURCES WebClientManager.cpp
+  set(SOURCES GUIWindowFullScreenWeb.cpp
+              WebClientManager.cpp
               WebPlayer.cpp
               WebVideoBuffer.cpp)
 
-  set(HEADERS WebClientManager.h
+  set(HEADERS GUIWindowFullScreenWeb.h
+              WebClientManager.h
               WebPlayer.h
               WebPlayerDefs.h
               WebVideoBuffer.h)

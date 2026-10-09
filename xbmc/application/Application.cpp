@@ -1193,6 +1193,8 @@ bool CApplication::OnAction(const CAction &action)
     bNotifyPlayer = true;
   else if (CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow() == WINDOW_FULLSCREEN_GAME)
     bNotifyPlayer = true;
+  else if (CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow() == WINDOW_FULLSCREEN_WEB)
+    bNotifyPlayer = true;
   else if (CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow() == WINDOW_VISUALISATION && bIsPlayingPVRChannel)
     bNotifyPlayer = true;
   else if (CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow() == WINDOW_DIALOG_VIDEO_OSD ||
@@ -1988,8 +1990,9 @@ void CApplication::PlaybackCleanup()
 
   if (!appPlayer->IsPlayingVideo())
   {
-    if(CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow() == WINDOW_FULLSCREEN_VIDEO ||
-       CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow() == WINDOW_FULLSCREEN_GAME)
+    if (CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow() == WINDOW_FULLSCREEN_VIDEO ||
+        CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow() == WINDOW_FULLSCREEN_GAME ||
+        CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow() == WINDOW_FULLSCREEN_WEB)
     {
       CServiceBroker::GetGUI()->GetWindowManager().PreviousWindow();
     }
@@ -2069,10 +2072,9 @@ void CApplication::StopPlaying()
       const int iWin = gui->GetWindowManager().GetActiveWindow();
 
       // turn off visualisation window when stopping
-      if ((iWin == WINDOW_VISUALISATION ||
-           iWin == WINDOW_FULLSCREEN_VIDEO ||
-           iWin == WINDOW_FULLSCREEN_GAME) &&
-           !m_bStop)
+      if ((iWin == WINDOW_VISUALISATION || iWin == WINDOW_FULLSCREEN_VIDEO ||
+           iWin == WINDOW_FULLSCREEN_GAME || iWin == WINDOW_FULLSCREEN_WEB) &&
+          !m_bStop)
         gui->GetWindowManager().PreviousWindow();
 
       g_partyModeManager.Disable();
@@ -2271,7 +2273,7 @@ void CApplication::ProcessSlow()
   int currentWindow = CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow();
   if (VIDEO::IsVideo(CurrentFileItem()) || CurrentFileItem().IsPicture() ||
       currentWindow == WINDOW_FULLSCREEN_VIDEO || currentWindow == WINDOW_FULLSCREEN_GAME ||
-      currentWindow == WINDOW_SLIDESHOW)
+      currentWindow == WINDOW_FULLSCREEN_WEB || currentWindow == WINDOW_SLIDESHOW)
   {
     CServiceBroker::GetJobManager()->PauseJobs();
   }
