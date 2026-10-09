@@ -486,6 +486,11 @@
       <home>ActivateWindow(Home)</home>
     </keyboard>
   </FullscreenWeb>
+  <WebOSD>
+    <keyboard>
+      <menu>OSD</menu>
+    </keyboard>
+  </WebOSD>
   <GameOSD>
     <keyboard>
       <m>OSD</m>

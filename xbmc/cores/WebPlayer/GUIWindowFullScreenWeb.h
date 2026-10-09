@@ -16,9 +16,10 @@ namespace WEB
 {
 
 /*!
- * \brief The window shown while the web player is active: the page is the
- * video layer, Kodi's OSD and dialogs sit on top, and the keys and pointer
- * events the keymap does not claim go to the web client.
+ * \brief The window shown while the web player is active: the page fills
+ * the screen through the render manager, the web OSD and Kodi's dialogs sit
+ * on top, and the keys and pointer events the keymap does not claim go to
+ * the web client.
  */
 class CGUIWindowFullScreenWeb : public CGUIWindow
 {

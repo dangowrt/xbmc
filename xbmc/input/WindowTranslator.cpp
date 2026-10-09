@@ -149,6 +149,7 @@ const CWindowTranslator::WindowMapByName CWindowTranslator::WindowMappingByName 
 
     {"fullscreengame", WINDOW_FULLSCREEN_GAME},
     {"fullscreenweb", WINDOW_FULLSCREEN_WEB},
+    {"webosd", WINDOW_DIALOG_WEB_OSD},
     {"visualisation", WINDOW_VISUALISATION},
     {"slideshow", WINDOW_SLIDESHOW},
     {"weather", WINDOW_WEATHER},

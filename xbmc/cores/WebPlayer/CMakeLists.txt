@@ -1,11 +1,13 @@
 if(TARGET ${APP_NAME_LC}::WaylandServer)
   set(SOURCES GUIDialogWebKeyboard.cpp
+              GUIDialogWebOSD.cpp
               GUIWindowFullScreenWeb.cpp
               WebClientManager.cpp
               WebPlayer.cpp
               WebVideoBuffer.cpp)
 
   set(HEADERS GUIDialogWebKeyboard.h
+              GUIDialogWebOSD.h
               GUIWindowFullScreenWeb.h
               WebClientManager.h
               WebPlayer.h

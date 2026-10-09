@@ -25,7 +25,7 @@
 using namespace KODI::WEB;
 
 CGUIWindowFullScreenWeb::CGUIWindowFullScreenWeb()
-  : CGUIWindow(WINDOW_FULLSCREEN_WEB, "VideoFullScreen.xml")
+  : CGUIWindow(WINDOW_FULLSCREEN_WEB, "WebFullScreen.xml")
 {
   m_controlStats = new GUICONTROLSTATS;
   m_loadType = KEEP_IN_MEMORY;
@@ -171,7 +171,7 @@ void CGUIWindowFullScreenWeb::OnDeinitWindow(int nextWindowID)
 
 void CGUIWindowFullScreenWeb::ToggleOSD()
 {
-  CGUIDialog* osd = CServiceBroker::GetGUI()->GetWindowManager().GetDialog(WINDOW_DIALOG_VIDEO_OSD);
+  CGUIDialog* osd = CServiceBroker::GetGUI()->GetWindowManager().GetDialog(WINDOW_DIALOG_WEB_OSD);
   if (!osd)
     return;
 
