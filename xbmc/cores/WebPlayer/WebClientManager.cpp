@@ -94,6 +94,18 @@ std::string FirstRenderNode()
   return path;
 }
 
+std::string CdmDirectory()
+{
+  ADDON::AddonPtr addon;
+  if (!CServiceBroker::GetAddonMgr().GetAddon("inputstream.adaptive", addon,
+                                              ADDON::AddonType::INPUTSTREAM,
+                                              ADDON::OnlyEnabled::CHOICE_YES))
+    return {};
+
+  const std::string path = addon->GetSetting("DECRYPTERPATH");
+  return path.empty() ? path : CSpecialProtocol::TranslatePath(path);
+}
+
 } // unnamed namespace
 
 CWebClientManager::~CWebClientManager()
@@ -190,6 +202,9 @@ void CWebClientManager::Spawn()
   // the client's audio sinks play through Kodi's audio engine
   if (m_audio)
     env.emplace(KODI_WEB_AUDIO_ENV, m_audio->GetPath());
+  // pages decrypt with the CDM that inputstream.adaptive installed
+  if (const std::string cdm = CdmDirectory(); !cdm.empty())
+    env.emplace("KODI_WEB_CDM_DIR", cdm);
   m_host->SpawnClient({command}, std::move(env));
 }
 
