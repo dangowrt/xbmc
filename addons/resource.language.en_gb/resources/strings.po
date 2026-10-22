@@ -25764,7 +25764,13 @@ msgctxt "#40246"
 msgid "Reload"
 msgstr ""
 
-#empty strings from id 40247 to 40399
+#empty strings from id 40247 to 40398
+
+#. Notification text when a web app's uplink has no local address
+#: xbmc/cores/WebPlayer/WebClientManager.cpp
+msgctxt "#40399"
+msgid "The uplink {0:s} is not available."
+msgstr ""
 
 # Video versions
 

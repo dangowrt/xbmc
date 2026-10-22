@@ -16,6 +16,7 @@
 #include "addons/AddonManager.h"
 #include "addons/addoninfo/AddonType.h"
 #include "application/ApplicationComponents.h"
+#include "dialogs/GUIDialogKaiToast.h"
 #include "filesystem/Directory.h"
 #include "filesystem/File.h"
 #include "filesystem/SpecialProtocol.h"
@@ -24,6 +25,9 @@
 #include "guilib/WindowIDs.h"
 #include "jobs/JobManager.h"
 #include "kodi-web-audio.h"
+#include "network/UplinkAddress.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
 #include "utils/StringUtils.h"
@@ -92,6 +96,24 @@ std::string FirstRenderNode()
   if (count > 0)
     drmFreeDevices(devices, count);
   return path;
+}
+
+void NotifyUplinkMissing(const std::string& profile, const std::string& uplink)
+{
+  CLog::Log(LOGERROR, "CWebClientManager::{}: the uplink \"{}\" of {} does not resolve",
+            __FUNCTION__, uplink, profile);
+
+  ADDON::AddonPtr addon;
+  const std::string name =
+      CServiceBroker::GetAddonMgr().GetAddon(profile, addon, ADDON::OnlyEnabled::CHOICE_YES)
+          ? addon->Name()
+          : profile;
+  const auto& localizeStrings = CServiceBroker::GetResourcesComponent().GetLocalizeStrings();
+  // "Error opening {0:s}"
+  // "The uplink {0:s} is not available."
+  CGUIDialogKaiToast::QueueNotification(CGUIDialogKaiToast::Error,
+                                        StringUtils::Format(localizeStrings.Get(13329), name),
+                                        StringUtils::Format(localizeStrings.Get(40399), uplink));
 }
 
 } // unnamed namespace
@@ -205,6 +227,11 @@ bool CWebClientManager::RequestView(const std::string& profile, IWebViewObserver
     return false;
 
   const std::string uplink = UplinkOf(profile);
+  if (!uplink.empty() && KODI::NETWORK::ResolveUplinkAddress(uplink).empty())
+  {
+    NotifyUplinkMissing(profile, uplink);
+    return false;
+  }
 
   std::unique_lock lock(m_lock);
   m_observer = &observer;
