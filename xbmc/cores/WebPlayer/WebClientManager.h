@@ -17,6 +17,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 
 namespace KODI
@@ -140,6 +141,7 @@ private:
   void Spawn();
   void ConfigureView(const std::string& profile);
   bool ConfigureViewFromAddon(const std::string& profile);
+  std::string UplinkOf(const std::string& profile) const;
   void SendProfileFiles(const std::string& profile,
                         const std::string& path,
                         const std::string& extension,
@@ -158,6 +160,8 @@ private:
   bool m_wantPending{false};
   std::map<std::string, WAYLANDHOST::CWaylandSurface*> m_views;
   std::map<WAYLANDHOST::CWaylandSurface*, std::string> m_surfaces;
+  std::map<std::string, std::string> m_uplinks;
+  std::set<std::string> m_replacing;
   bool m_keyboardOpen{false};
   bool m_textInputActive{false};
   WAYLANDHOST::TextInputState m_textInput;

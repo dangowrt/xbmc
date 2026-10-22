@@ -126,6 +126,7 @@ void CWebClientManager::Stop()
   m_state = State::ABSENT;
   m_views.clear();
   m_surfaces.clear();
+  m_replacing.clear();
   m_observer = nullptr;
 }
 
@@ -193,6 +194,8 @@ bool CWebClientManager::RequestView(const std::string& profile, IWebViewObserver
   if (!m_host)
     return false;
 
+  const std::string uplink = UplinkOf(profile);
+
   std::unique_lock lock(m_lock);
   m_observer = &observer;
   m_observedProfile = profile;
@@ -201,7 +204,7 @@ bool CWebClientManager::RequestView(const std::string& profile, IWebViewObserver
   m_wantPending = false;
 
   const auto view = m_views.find(profile);
-  if (view != m_views.end() && view->second)
+  if (view != m_views.end() && view->second && m_uplinks[profile] == uplink)
   {
     CWaylandSurface& surface = *view->second;
     lock.unlock();
@@ -209,10 +212,24 @@ bool CWebClientManager::RequestView(const std::string& profile, IWebViewObserver
     return true;
   }
 
+  m_uplinks[profile] = uplink;
+  if (m_replacing.count(profile))
+    return true;
+
+  // the uplink is fixed when the client creates the view's session
+  if (view != m_views.end())
+  {
+    m_replacing.insert(profile);
+    m_surfaces.erase(view->second);
+    m_views.erase(view);
+    m_host->WebViewClose(profile);
+    return true;
+  }
+
   switch (m_state)
   {
     case State::READY:
-      m_host->WebWantView(profile, {});
+      m_host->WebWantView(profile, uplink);
       break;
     case State::STARTING:
       m_wantPending = true;
@@ -312,6 +329,7 @@ void CWebClientManager::OnClientExited(pid_t pid, int status)
             __FUNCTION__, pid, status);
   m_views.clear();
   m_surfaces.clear();
+  m_replacing.clear();
   IWebViewObserver* observer = m_observer;
   const std::string profile = m_observedProfile;
 
@@ -342,9 +360,20 @@ void CWebClientManager::OnWebClientReady()
   const bool want = m_wantPending && m_views.find(m_observedProfile) == m_views.end();
   m_wantPending = false;
   const std::string profile = m_observedProfile;
+  const std::string uplink = m_uplinks[profile];
   lock.unlock();
   if (want)
-    m_host->WebWantView(profile, {});
+    m_host->WebWantView(profile, uplink);
+}
+
+std::string CWebClientManager::UplinkOf(const std::string& profile) const
+{
+  ADDON::AddonPtr addon;
+  if (!CServiceBroker::GetAddonMgr().GetAddon(profile, addon, ADDON::AddonType::WEBAPP,
+                                              ADDON::OnlyEnabled::CHOICE_YES))
+    return {};
+
+  return addon->GetSetting("uplinkaddress");
 }
 
 bool CWebClientManager::ConfigureViewFromAddon(const std::string& profile)
@@ -539,9 +568,13 @@ void CWebClientManager::OnWebViewDestroyed(const std::string& profile)
     m_surfaces.erase(view->second);
     m_views.erase(view);
   }
+  const bool replaced = m_replacing.erase(profile) > 0;
   IWebViewObserver* observer = ObserverOf(profile);
+  const std::string uplink = m_uplinks[profile];
   lock.unlock();
-  if (observer)
+  if (replaced && observer)
+    m_host->WebWantView(profile, uplink);
+  else if (observer)
     observer->OnWebViewGone(profile);
 }
 
