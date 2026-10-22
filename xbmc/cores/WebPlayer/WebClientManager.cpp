@@ -23,6 +23,7 @@
 #include "guilib/GUIWindowManager.h"
 #include "guilib/WindowIDs.h"
 #include "jobs/JobManager.h"
+#include "kodi-web-audio.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
 #include "utils/StringUtils.h"
@@ -60,6 +61,7 @@ namespace
 {
 
 constexpr const char* PROFILE_ROOT = "special://profile/webprofiles/";
+constexpr const char* AUDIO_SOCKET = "special://temp/webaudio.sock";
 
 void OnWebKeyboardText(CGUIKeyboard*, const std::string& text)
 {
@@ -108,6 +110,10 @@ void CWebClientManager::Start()
   if (!StartHost())
     return;
 
+  m_audio = std::make_unique<CWebAudioServer>();
+  if (!m_audio->Start(CSpecialProtocol::TranslatePath(AUDIO_SOCKET)))
+    m_audio.reset();
+
   CServiceBroker::GetWinSystem()->RegisterRenderLoop(this);
   if (settings->GetBool(CSettings::SETTING_WEB_PRELOAD))
     Spawn();
@@ -121,6 +127,7 @@ void CWebClientManager::Stop()
   CServiceBroker::GetWinSystem()->UnregisterRenderLoop(this);
   m_host->Stop();
   m_host.reset();
+  m_audio.reset();
 
   std::unique_lock lock(m_lock);
   m_state = State::ABSENT;
@@ -180,6 +187,9 @@ void CWebClientManager::Spawn()
       {"XDG_CACHE_HOME", CSpecialProtocol::TranslatePath("special://temp/webcache")},
       {"KODI_WEBVIEW_SOFTWARE_CODECS",
        settings->GetBool(CSettings::SETTING_WEB_SOFTWARECODECS) ? "1" : "0"}};
+  // the client's audio sinks play through Kodi's audio engine
+  if (m_audio)
+    env.emplace(KODI_WEB_AUDIO_ENV, m_audio->GetPath());
   m_host->SpawnClient({command}, std::move(env));
 }
 

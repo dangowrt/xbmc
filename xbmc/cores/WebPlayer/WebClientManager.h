@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "WebAudioServer.h"
 #include "application/IApplicationComponent.h"
 #include "guilib/DispResource.h"
 #include "jobs/Job.h"
@@ -151,6 +152,7 @@ private:
   void EnsureCaretVisible();
 
   std::unique_ptr<WAYLANDHOST::CWaylandHost> m_host;
+  std::unique_ptr<CWebAudioServer> m_audio;
   mutable CCriticalSection m_lock;
   State m_state{State::ABSENT};
   bool m_respawned{false};
