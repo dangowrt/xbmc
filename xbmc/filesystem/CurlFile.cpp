@@ -903,6 +903,7 @@ void CCurlFile::ParseAndCorrectUrl(CURL &url2)
         m_verifyPeer = false;
     }
     m_ftppasvip = url2.HasProtocolOption("pasvip") && url2.GetProtocolOption("pasvip") != "0";
+    m_uplinkAddress = KODI::NETWORK::UplinkOfURL(url2);
   }
   else if(url2.IsProtocol("http") ||
     url2.IsProtocol("https"))
