@@ -38,10 +38,18 @@
 
 namespace
 {
-int SystemLookup(const char* host, const addrinfo* hints, addrinfo** res)
+int HostLookup(const char* host, const std::string& uplink, const addrinfo* hints, addrinfo** res)
 {
 #if defined(HAS_UPLINKDNS)
-  return uplinkdns_getaddrinfo(UPLINKDNS_CTX_SYSTEM, host, nullptr, hints, res);
+  int ctx = UPLINKDNS_CTX_SYSTEM;
+  if (!uplink.empty())
+  {
+    ctx = uplinkdns_uplink_add(uplink.c_str());
+    if (ctx < 0)
+      return EAI_FAIL;
+  }
+
+  return uplinkdns_getaddrinfo(ctx, host, nullptr, hints, res);
 #else
   return getaddrinfo(host, nullptr, hints, res);
 #endif
@@ -112,7 +120,9 @@ std::string KODI::NETWORK::SelectDNSAddress(const addrinfo* results)
   return fallback;
 }
 
-bool CDNSNameCache::Lookup(const std::string& strHostName, std::string& strIpAddress)
+bool CDNSNameCache::Lookup(const std::string& strHostName,
+                           std::string& strIpAddress,
+                           const std::string& uplink)
 {
   if (strHostName.empty() && strIpAddress.empty())
     return false;
@@ -129,8 +139,9 @@ bool CDNSNameCache::Lookup(const std::string& strHostName, std::string& strIpAdd
     return true;
   }
 
-  // check if there's a custom entry or if it's already cached
-  if (GetCached(strHostName, strIpAddress))
+  // check if there's a custom entry or if it's already cached; the cache holds the system
+  // resolver's answers, not an uplink's
+  if (uplink.empty() && GetCached(strHostName, strIpAddress))
     return true;
 
   // perform dns lookup
@@ -141,14 +152,15 @@ bool CDNSNameCache::Lookup(const std::string& strHostName, std::string& strIpAdd
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags |= AI_CANONNAME;
 
-  if (SystemLookup(strHostName.c_str(), &hints, &res) == 0)
+  if (HostLookup(strHostName.c_str(), uplink, &hints, &res) == 0)
   {
     strIpAddress = KODI::NETWORK::SelectDNSAddress(res);
     freeaddrinfo(res);
 
     if (!strIpAddress.empty())
     {
-      Add(strHostName, strIpAddress);
+      if (uplink.empty())
+        Add(strHostName, strIpAddress);
       return true;
     }
   }

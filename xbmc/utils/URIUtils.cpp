@@ -22,6 +22,7 @@
 #include "filesystem/StackDirectory.h"
 #include "network/DNSNameCache.h"
 #include "network/Network.h"
+#include "network/UplinkAddress.h"
 #if defined(TARGET_WINDOWS)
 #include "platform/win32/CharsetConverter.h"
 #endif
@@ -1044,7 +1045,7 @@ bool URIUtils::IsOnLAN(const std::string& strPath, LanCheckMode lanCheckMode)
 
   const std::string& host = url.GetHostName();
 
-  return IsHostOnLAN(host, lanCheckMode);
+  return IsHostOnLAN(host, lanCheckMode, KODI::NETWORK::UplinkOfURL(url));
 }
 
 static bool addr_match(uint32_t addr, const char* target, const char* submask)
@@ -1054,7 +1055,9 @@ static bool addr_match(uint32_t addr, const char* target, const char* submask)
   return (addr & mask) == (addr2 & mask);
 }
 
-bool URIUtils::IsHostOnLAN(const std::string& host, LanCheckMode lanCheckMode)
+bool URIUtils::IsHostOnLAN(const std::string& host,
+                           LanCheckMode lanCheckMode,
+                           const std::string& uplink)
 {
   if (host.empty())
     return false;
@@ -1069,7 +1072,7 @@ bool URIUtils::IsHostOnLAN(const std::string& host, LanCheckMode lanCheckMode)
   {
     std::string ip;
     auto cache = CServiceBroker::GetDNSNameCache();
-    if (cache && cache->Lookup(host, ip))
+    if (cache && cache->Lookup(host, ip, uplink))
       address = ntohl(inet_addr(ip.c_str()));
   }
 
