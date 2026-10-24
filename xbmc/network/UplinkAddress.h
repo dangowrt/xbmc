@@ -30,5 +30,8 @@ UplinkBinding RequireUplink(const std::string& spec);
 std::string ResolveUplinkAddress(const std::string& spec);
 bool IsDirectDestination(const std::string& host);
 std::string UplinkOfURL(const CURL& url);
+bool IsUplinkURL(const std::string& path);
+std::string UplinkPath(const std::string& path, const std::string& spec);
+std::string AddonUplinkPath(const std::string& addonId, const std::string& path);
 
 } /* namespace KODI::NETWORK */

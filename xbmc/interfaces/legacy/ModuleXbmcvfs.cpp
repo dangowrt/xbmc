@@ -16,8 +16,18 @@
 #include "filesystem/Directory.h"
 #include "filesystem/File.h"
 #include "filesystem/SpecialProtocol.h"
+#include "network/UplinkAddress.h"
 #include "utils/FileUtils.h"
 #include "utils/URIUtils.h"
+
+namespace
+{
+std::string AddonPath(const std::string& path)
+{
+  XBMCAddon::LanguageHook* hook = XBMCAddon::LanguageHook::GetLanguageHook();
+  return KODI::NETWORK::AddonUplinkPath(hook ? hook->GetAddonId() : "", path);
+}
+} // unnamed namespace
 
 namespace XBMCAddon
 {
@@ -26,31 +36,37 @@ namespace XBMCAddon
   {
     bool copy(const String& strSource, const String& strDestination)
     {
+      const std::string source = AddonPath(strSource);
+      const std::string destination = AddonPath(strDestination);
       DelayedCallGuard dg;
-      return XFILE::CFile::Copy(strSource, strDestination);
+      return XFILE::CFile::Copy(source, destination);
     }
 
     // delete a file
     bool deleteFile(const String& strSource)
     {
+      const std::string source = AddonPath(strSource);
       DelayedCallGuard dg;
-      return XFILE::CFile::Delete(strSource);
+      return XFILE::CFile::Delete(source);
     }
 
     // rename a file
     bool rename(const String& file, const String& newFile)
     {
+      const std::string source = AddonPath(file);
+      const std::string destination = AddonPath(newFile);
       DelayedCallGuard dg;
-      return XFILE::CFile::Rename(file,newFile);
+      return XFILE::CFile::Rename(source, destination);
     }
 
     // check for a file or folder existence, mimics Pythons os.path.exists()
     bool exists(const String& path)
     {
+      const std::string target = AddonPath(path);
       DelayedCallGuard dg;
       if (URIUtils::HasSlashAtEnd(path, true))
-        return XFILE::CDirectory::Exists(path, false);
-      return XFILE::CFile::Exists(path, false);
+        return XFILE::CDirectory::Exists(target, false);
+      return XFILE::CFile::Exists(target, false);
     }
 
     // make legal file name
@@ -77,33 +93,37 @@ namespace XBMCAddon
     // make a directory
     bool mkdir(const String& path)
     {
+      const std::string target = AddonPath(path);
       DelayedCallGuard dg;
-      return XFILE::CDirectory::Create(path);
+      return XFILE::CDirectory::Create(target);
     }
 
     // make all directories along the path
     bool mkdirs(const String& path)
     {
+      const std::string target = AddonPath(path);
       DelayedCallGuard dg;
-      return CUtil::CreateDirectoryEx(path);
+      return CUtil::CreateDirectoryEx(target);
     }
 
     bool rmdir(const String& path, bool force)
     {
+      const std::string target = AddonPath(path);
       DelayedCallGuard dg;
 
       if (force)
-        return CFileUtils::DeleteItem(path);
+        return CFileUtils::DeleteItem(target);
       else
-        return XFILE::CDirectory::Remove(path);
+        return XFILE::CDirectory::Remove(target);
     }
 
     Tuple<std::vector<String>, std::vector<String> > listdir(const String& path)
     {
+      const std::string target = AddonPath(path);
       DelayedCallGuard dg;
       CFileItemList items;
       std::string strSource;
-      strSource = path;
+      strSource = target;
       XFILE::CDirectory::GetDirectory(strSource, items, "", XFILE::DIR_FLAG_NO_FILE_DIRS);
 
       Tuple<std::vector<String>, std::vector<String> > ret;

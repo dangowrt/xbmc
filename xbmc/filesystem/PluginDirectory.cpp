@@ -62,18 +62,10 @@ void ApplyAddonUplink(const std::string& addonId, CFileItem& item)
   if (spec.empty())
     return;
 
-  const std::string path = item.GetPath();
-  if (!URIUtils::IsHTTP(path))
+  if (!KODI::NETWORK::IsUplinkURL(item.GetPath()))
     return;
 
-  const KODI::NETWORK::UplinkBinding uplink = KODI::NETWORK::RequireUplink(spec);
-
-  CURL url(path);
-  if (uplink.address.empty())
-    url.SetProtocolOption("local_dev", uplink.device);
-  else
-    url.SetProtocolOption("local_addr", uplink.address);
-  item.SetPath(url.Get());
+  item.SetPath(KODI::NETWORK::UplinkPath(item.GetPath(), spec));
 
   const std::string inputstream = item.GetProperty("inputstream").asString();
   if (!inputstream.empty())
