@@ -49,6 +49,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <mutex>
 #include <utility>
@@ -58,6 +59,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <xf86drm.h>
+
+#if defined(HAS_UPLINKDNS)
+#include <uplinkdns.h>
+#endif
 
 using namespace KODI::WEB;
 using namespace KODI::WAYLANDHOST;
@@ -109,6 +114,33 @@ std::string CdmDirectory()
 
   const std::string path = addon->GetSetting("DECRYPTERPATH");
   return path.empty() ? path : CSpecialProtocol::TranslatePath(path);
+}
+
+void AddUplinkEnvironment(std::map<std::string, std::string>& env)
+{
+#if defined(HAS_UPLINKDNS)
+  ADDON::VECADDONS addons;
+  CServiceBroker::GetAddonMgr().GetAddons(addons, ADDON::AddonType::WEBAPP);
+
+  std::string uplinks;
+  for (const auto& addon : addons)
+  {
+    const std::string uplink = addon->GetSetting("uplinkaddress");
+    if (!uplink.empty())
+      uplinks += (uplinks.empty() ? "" : " ") + uplink;
+  }
+
+  // the client's network process resolves each session's names through the uplink it binds to
+  if (uplinks.empty())
+    return;
+
+  std::string preload = UPLINKDNS_SONAME;
+  if (const char* inherited = std::getenv("LD_PRELOAD"); inherited && *inherited)
+    preload = std::string(inherited) + " " + preload;
+
+  env.emplace("LD_PRELOAD", preload);
+  env.emplace("UPLINKDNS_UPLINKS", uplinks);
+#endif
 }
 
 void NotifyUplinkMissing(const std::string& profile, const std::string& uplink)
@@ -228,6 +260,7 @@ void CWebClientManager::Spawn()
   // pages decrypt with the CDM that inputstream.adaptive installed
   if (const std::string cdm = CdmDirectory(); !cdm.empty())
     env.emplace("KODI_WEB_CDM_DIR", cdm);
+  AddUplinkEnvironment(env);
   m_host->SpawnClient({command}, std::move(env));
 }
 
@@ -282,7 +315,7 @@ bool CWebClientManager::RequestView(const std::string& profile, IWebViewObserver
   switch (m_state)
   {
     case State::READY:
-      m_host->WebWantView(profile, uplink);
+      m_host->WebWantView(profile, KODI::NETWORK::UplinkKey(uplink));
       break;
     case State::STARTING:
       m_wantPending = true;
@@ -416,7 +449,7 @@ void CWebClientManager::OnWebClientReady()
   const std::string uplink = m_uplinks[profile];
   lock.unlock();
   if (want)
-    m_host->WebWantView(profile, uplink);
+    m_host->WebWantView(profile, KODI::NETWORK::UplinkKey(uplink));
 }
 
 std::string CWebClientManager::UplinkOf(const std::string& profile) const
@@ -626,7 +659,7 @@ void CWebClientManager::OnWebViewDestroyed(const std::string& profile)
   const std::string uplink = m_uplinks[profile];
   lock.unlock();
   if (replaced && observer)
-    m_host->WebWantView(profile, uplink);
+    m_host->WebWantView(profile, KODI::NETWORK::UplinkKey(uplink));
   else if (observer)
     observer->OnWebViewGone(profile);
 }
