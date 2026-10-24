@@ -8,7 +8,10 @@
 
 #include "UplinkAddress.h"
 
+#include "ServiceBroker.h"
 #include "URL.h"
+#include "settings/AdvancedSettings.h"
+#include "settings/SettingsComponent.h"
 #include "utils/URIUtils.h"
 #include "utils/log.h"
 
@@ -260,6 +263,37 @@ std::string UplinkOfURL(const CURL& url)
     return url.GetProtocolOption("local_dev");
 
   return url.GetProtocolOption("local_addr");
+}
+
+bool IsUplinkURL(const std::string& path)
+{
+  const CURL url(path);
+  return url.IsProtocol("http") || url.IsProtocol("https") || url.IsProtocol("dav") ||
+         url.IsProtocol("davs") || url.IsProtocol("ftp") || url.IsProtocol("ftps");
+}
+
+std::string UplinkPath(const std::string& path, const std::string& spec)
+{
+  if (spec.empty() || !IsUplinkURL(path))
+    return path;
+
+  const UplinkBinding uplink = RequireUplink(spec);
+  CURL url(path);
+  if (uplink.address.empty())
+    url.SetProtocolOption("local_dev", uplink.device);
+  else
+    url.SetProtocolOption("local_addr", uplink.address);
+
+  return url.Get();
+}
+
+std::string AddonUplinkPath(const std::string& addonId, const std::string& path)
+{
+  const auto settings = CServiceBroker::GetSettingsComponent();
+  if (addonId.empty() || !settings || !settings->GetAdvancedSettings())
+    return path;
+
+  return UplinkPath(path, settings->GetAdvancedSettings()->GetAddonUplink(addonId));
 }
 
 } /* namespace KODI::NETWORK */

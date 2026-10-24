@@ -13,6 +13,7 @@
 #include "LanguageHook.h"
 #include "commons/Buffer.h"
 #include "filesystem/File.h"
+#include "network/UplinkAddress.h"
 
 #include <algorithm>
 
@@ -61,11 +62,13 @@ namespace XBMCAddon
     public:
       inline File(const String& filepath, const char* mode = NULL) : file(new XFILE::CFile())
       {
+        const std::string path = KODI::NETWORK::AddonUplinkPath(
+            languageHook ? languageHook->GetAddonId() : "", filepath);
         DelayedCallGuard dg(languageHook);
         if (mode && strncmp(mode, "w", 1) == 0)
-          file->OpenForWrite(filepath,true);
+          file->OpenForWrite(path, true);
         else
-          file->Open(filepath, XFILE::READ_NO_CACHE);
+          file->Open(path, XFILE::READ_NO_CACHE);
       }
 
       inline ~File() override { delete file; }

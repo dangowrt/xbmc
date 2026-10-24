@@ -11,6 +11,7 @@
 #include "AddonClass.h"
 #include "LanguageHook.h"
 #include "filesystem/File.h"
+#include "network/UplinkAddress.h"
 
 namespace XBMCAddon
 {
@@ -48,8 +49,10 @@ namespace XBMCAddon
     public:
       Stat(const String& path)
       {
+        const std::string target =
+            KODI::NETWORK::AddonUplinkPath(languageHook ? languageHook->GetAddonId() : "", path);
         DelayedCallGuard dg;
-        XFILE::CFile::Stat(path, &st);
+        XFILE::CFile::Stat(target, &st);
       }
 
 #ifdef DOXYGEN_SHOULD_USE_THIS
