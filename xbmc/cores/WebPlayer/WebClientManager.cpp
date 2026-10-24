@@ -54,6 +54,7 @@
 #include <utility>
 
 #include <fcntl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <xf86drm.h>
@@ -242,7 +243,7 @@ bool CWebClientManager::RequestView(const std::string& profile, IWebViewObserver
     return false;
 
   const std::string uplink = UplinkOf(profile);
-  if (!uplink.empty() && KODI::NETWORK::ResolveUplinkAddress(uplink).empty())
+  if (!uplink.empty() && !KODI::NETWORK::ResolveUplink(uplink, AF_UNSPEC).IsValid())
   {
     NotifyUplinkMissing(profile, uplink);
     return false;

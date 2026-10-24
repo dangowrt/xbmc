@@ -736,9 +736,10 @@ void CCurlFile::SetCommonOptions(CReadState* state, bool failOnError /* = true *
 
   if (!m_uplinkAddress.empty())
   {
-    const std::string address = KODI::NETWORK::ResolveUplinkAddress(m_uplinkAddress);
-    if (!address.empty())
-      g_curlInterface.easy_setopt(h, CURLOPT_INTERFACE, address.c_str());
+    const KODI::NETWORK::UplinkBinding uplink = KODI::NETWORK::RequireUplink(m_uplinkAddress);
+    const std::string interface =
+        uplink.address.empty() ? "if!" + uplink.device : "host!" + uplink.address;
+    g_curlInterface.easy_setopt(h, CURLOPT_INTERFACE, interface.c_str());
   }
 
   if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_curlDisableHTTP2)

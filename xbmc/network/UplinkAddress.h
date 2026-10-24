@@ -13,6 +13,16 @@
 namespace KODI::NETWORK
 {
 
+struct UplinkBinding
+{
+  std::string device;
+  std::string address;
+
+  bool IsValid() const { return !device.empty() || !address.empty(); }
+};
+
+UplinkBinding ResolveUplink(const std::string& spec, int family);
+UplinkBinding RequireUplink(const std::string& spec);
 std::string ResolveUplinkAddress(const std::string& spec);
 bool IsDirectDestination(const std::string& host);
 

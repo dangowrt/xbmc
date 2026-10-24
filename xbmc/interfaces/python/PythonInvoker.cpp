@@ -70,39 +70,67 @@ using namespace std::chrono_literals;
 
 namespace
 {
-PyObject* uplinkAddress(PyObject* self, PyObject* args)
+PyObject* uplinkBinding(PyObject* self, PyObject* args)
 {
   const char* spec = nullptr;
   const char* host = nullptr;
+  int family = 0;
 
-  if (!PyArg_ParseTuple(args, "ss", &spec, &host))
+  if (!PyArg_ParseTuple(args, "ssi", &spec, &host, &family))
     return nullptr;
 
   if (KODI::NETWORK::IsDirectDestination(host))
-    return PyUnicode_FromString("");
+    Py_RETURN_NONE;
 
-  return PyUnicode_FromString(KODI::NETWORK::ResolveUplinkAddress(spec).c_str());
+  const KODI::NETWORK::UplinkBinding binding = KODI::NETWORK::ResolveUplink(spec, family);
+  return Py_BuildValue("(ss)", binding.device.c_str(), binding.address.c_str());
 }
 
-PyMethodDef uplinkAddressMethod = {"__xbmcuplinkaddress__", uplinkAddress, METH_VARARGS, nullptr};
+PyMethodDef uplinkBindingMethod = {"__xbmcuplinkbinding__", uplinkBinding, METH_VARARGS, nullptr};
 
 const char* uplinkBootstrap = R"PY(
+import errno as _errno
 import socket as _socket
 
-def _kodi_bind_uplink(sock, address, _connect=_socket.socket.connect):
-    try:
-        if (sock.family == _socket.AF_INET and sock.type == _socket.SOCK_STREAM
-                and sock.getsockname()[1] == 0):
-            source = __xbmcuplinkaddress__(__xbmcuplink__, str(address[0]))
-            if source:
-                sock.bind((source, 0))
-    except (OSError, IndexError, TypeError):
-        pass
+_SO_BINDTODEVICE = getattr(_socket, "SO_BINDTODEVICE", None)
+_IFNAMSIZ = 16
+
+def _kodi_device_bound(sock):
+    if _SO_BINDTODEVICE is None:
+        return False
+    return bool(sock.getsockopt(_socket.SOL_SOCKET, _SO_BINDTODEVICE, _IFNAMSIZ).strip(b"\0"))
+
+def _kodi_bind_uplink(sock, address):
+    if sock.family not in (_socket.AF_INET, _socket.AF_INET6):
+        return
+    if sock.getsockname()[1] != 0 or _kodi_device_bound(sock):
+        return
+    binding = __xbmcuplinkbinding__(__xbmcuplink__, str(address[0]), int(sock.family))
+    if binding is None:
+        return
+    device, source = binding
+    if device and _SO_BINDTODEVICE is not None:
+        sock.setsockopt(_socket.SOL_SOCKET, _SO_BINDTODEVICE, device.encode())
+    elif source:
+        sock.bind((source, 0))
+    else:
+        raise OSError(_errno.ENETUNREACH, "uplink %s is not available" % __xbmcuplink__)
+
+def _kodi_connect(sock, address, _connect=_socket.socket.connect):
+    _kodi_bind_uplink(sock, address)
     return _connect(sock, address)
 
+def _kodi_connect_ex(sock, address, _connect_ex=_socket.socket.connect_ex):
+    try:
+        _kodi_bind_uplink(sock, address)
+    except OSError as error:
+        return error.errno
+    return _connect_ex(sock, address)
+
 if not getattr(_socket.socket.connect, "_kodi_uplink", False):
-    _kodi_bind_uplink._kodi_uplink = True
-    _socket.socket.connect = _kodi_bind_uplink
+    _kodi_connect._kodi_uplink = True
+    _socket.socket.connect = _kodi_connect
+    _socket.socket.connect_ex = _kodi_connect_ex
 )PY";
 } // unnamed namespace
 
@@ -749,8 +777,8 @@ void CPythonInvoker::onUplinkInitialization(void* moduleDict)
 
   PyDict_SetItemString(moduleDictionary, "__xbmcuplink__",
                        PyObjectPtr(PyUnicode_FromString(spec.c_str())).get());
-  PyDict_SetItemString(moduleDictionary, "__xbmcuplinkaddress__",
-                       PyObjectPtr(PyCFunction_New(&uplinkAddressMethod, nullptr)).get());
+  PyDict_SetItemString(moduleDictionary, "__xbmcuplinkbinding__",
+                       PyObjectPtr(PyCFunction_New(&uplinkBindingMethod, nullptr)).get());
 
   if (!PyObjectPtr(PyRun_String(uplinkBootstrap, Py_file_input, moduleDictionary, moduleDictionary)))
   {
