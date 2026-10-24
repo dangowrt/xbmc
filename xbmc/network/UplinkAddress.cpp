@@ -269,7 +269,8 @@ bool IsUplinkURL(const std::string& path)
 {
   const CURL url(path);
   return url.IsProtocol("http") || url.IsProtocol("https") || url.IsProtocol("dav") ||
-         url.IsProtocol("davs") || url.IsProtocol("ftp") || url.IsProtocol("ftps");
+         url.IsProtocol("davs") || url.IsProtocol("ftp") || url.IsProtocol("ftps") ||
+         url.IsProtocol("udp") || url.IsProtocol("rtp");
 }
 
 std::string UplinkPath(const std::string& path, const std::string& spec)
