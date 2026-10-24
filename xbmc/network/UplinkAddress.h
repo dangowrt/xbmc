@@ -10,6 +10,8 @@
 
 #include <string>
 
+class CURL;
+
 namespace KODI::NETWORK
 {
 
@@ -27,5 +29,6 @@ UplinkBinding ResolveUplink(const std::string& spec, int family);
 UplinkBinding RequireUplink(const std::string& spec);
 std::string ResolveUplinkAddress(const std::string& spec);
 bool IsDirectDestination(const std::string& host);
+std::string UplinkOfURL(const CURL& url);
 
 } /* namespace KODI::NETWORK */
