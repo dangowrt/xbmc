@@ -55,10 +55,14 @@ public:
    *
    * \param strHostName The hostname to look up
    * \param[out] strIpAddress Contains the IP for the hostname if the info can be provided, otherwise unchanged
+   * \param uplink The uplink to resolve through, empty for the system resolver. A lookup through an
+   *               uplink bypasses the cache.
    *
    * \return true if the IP is cached or the DNS query was successful
    */
-  bool Lookup(const std::string& strHostName, std::string& strIpAddress);
+  bool Lookup(const std::string& strHostName,
+              std::string& strIpAddress,
+              const std::string& uplink = {});
 
 private:
   static constexpr std::chrono::seconds TTL{60};

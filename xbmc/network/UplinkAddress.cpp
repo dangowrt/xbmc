@@ -8,6 +8,7 @@
 
 #include "UplinkAddress.h"
 
+#include "URL.h"
 #include "utils/URIUtils.h"
 #include "utils/log.h"
 
@@ -251,6 +252,14 @@ bool IsDirectDestination(const std::string& host)
 #endif
 
   return URIUtils::IsHostOnLAN(host, LanCheckMode::ANY_PRIVATE_SUBNET);
+}
+
+std::string UplinkOfURL(const CURL& url)
+{
+  if (url.HasProtocolOption("local_dev"))
+    return url.GetProtocolOption("local_dev");
+
+  return url.GetProtocolOption("local_addr");
 }
 
 } /* namespace KODI::NETWORK */
