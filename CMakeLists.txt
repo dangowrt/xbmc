@@ -290,6 +290,7 @@ set(optional_deps Alsa>=1.0.27
                   Sndio
                   UDEV
                   Udfread
+                  UplinkDNS
                   XSLT
                   ${PLATFORM_OPTIONAL_DEPS})
 
