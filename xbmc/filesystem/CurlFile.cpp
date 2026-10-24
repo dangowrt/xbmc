@@ -965,7 +965,7 @@ void CCurlFile::ParseAndCorrectUrl(CURL &url2)
           SetAcceptCharset(value);
         else if (name == "sslcipherlist")
           m_cipherlist = value;
-        else if (name == "local_addr" || name == "local-address")
+        else if (name == "local_addr" || name == "local-address" || name == "local_dev")
           m_uplinkAddress = value;
         else if (name == "connection-timeout")
           m_connecttimeout = strtol(value.c_str(), NULL, 10);
