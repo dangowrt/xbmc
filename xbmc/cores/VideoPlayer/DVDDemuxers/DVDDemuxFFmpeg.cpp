@@ -329,7 +329,9 @@ bool CDVDDemuxFFmpeg::Open(const std::shared_ptr<CDVDInputStream>& pInput, bool 
     }
     else if (url.IsProtocol("udp") || url.IsProtocol("rtp"))
     {
-      std::string strURL = url.Get();
+      CURL plain(url);
+      plain.SetProtocolOptions("");
+      std::string strURL = plain.Get();
       CLog::Log(LOGDEBUG, "CDVDDemuxFFmpeg::Open() UDP/RTP Original URL '{}'", strURL);
       size_t found = strURL.find("://");
       if (found != std::string::npos)
@@ -820,6 +822,20 @@ void CDVDDemuxFFmpeg::SetSpeed(int iSpeed)
   }
 }
 
+namespace
+{
+void SetUplinkOption(AVDictionary** options, const std::string& spec, const char* addressOption)
+{
+  const KODI::NETWORK::UplinkBinding uplink = KODI::NETWORK::RequireUplink(spec);
+  const char* option = uplink.address.empty() ? "local_dev" : addressOption;
+  const std::string& target = uplink.address.empty() ? uplink.device : uplink.address;
+
+  CLog::Log(LOGDEBUG, "CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput() adding ffmpeg option '{}: {}'",
+            option, target);
+  av_dict_set(options, option, target.c_str(), 0);
+}
+} // unnamed namespace
+
 AVDictionary* CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput()
 {
   const std::shared_ptr<CDVDInputStreamFFmpeg> input =
@@ -857,16 +873,7 @@ AVDictionary* CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput()
         av_dict_set(&options, name.c_str(), value.c_str(), 0);
       }
       else if (name == "local_addr" || name == "local-address" || name == "local_dev")
-      {
-        const KODI::NETWORK::UplinkBinding uplink = KODI::NETWORK::RequireUplink(value);
-        const char* option = uplink.address.empty() ? "local_dev" : "local_addr";
-        const std::string& target = uplink.address.empty() ? uplink.device : uplink.address;
-
-        CLog::Log(LOGDEBUG,
-                  "CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput() adding ffmpeg option '{}: {}'",
-                  option, target);
-        av_dict_set(&options, option, target.c_str(), 0);
-      }
+        SetUplinkOption(&options, value, "local_addr");
       // map some standard http headers to the ffmpeg related options
       else if (name == "user-agent")
       {
@@ -956,6 +963,12 @@ AVDictionary* CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput()
       if (XFILE::CCurlFile::GetCookies(url, cookies))
         av_dict_set(&options, "cookies", cookies.c_str(), 0);
     }
+  }
+  else if (url.IsProtocol("udp") || url.IsProtocol("rtp"))
+  {
+    const std::string uplink = KODI::NETWORK::UplinkOfURL(url);
+    if (!uplink.empty())
+      SetUplinkOption(&options, uplink, "localaddr");
   }
 
   if (input)
