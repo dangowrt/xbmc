@@ -856,17 +856,16 @@ AVDictionary* CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput()
                   it->first, value);
         av_dict_set(&options, name.c_str(), value.c_str(), 0);
       }
-      else if (name == "local_addr" || name == "local-address")
+      else if (name == "local_addr" || name == "local-address" || name == "local_dev")
       {
-        const std::string address = KODI::NETWORK::ResolveUplinkAddress(value);
-        if (!address.empty())
-        {
-          CLog::Log(LOGDEBUG,
-                    "CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput() adding ffmpeg option "
-                    "'local_addr: {}'",
-                    address);
-          av_dict_set(&options, "local_addr", address.c_str(), 0);
-        }
+        const KODI::NETWORK::UplinkBinding uplink = KODI::NETWORK::RequireUplink(value);
+        const char* option = uplink.address.empty() ? "local_dev" : "local_addr";
+        const std::string& target = uplink.address.empty() ? uplink.device : uplink.address;
+
+        CLog::Log(LOGDEBUG,
+                  "CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput() adding ffmpeg option '{}: {}'",
+                  option, target);
+        av_dict_set(&options, option, target.c_str(), 0);
       }
       // map some standard http headers to the ffmpeg related options
       else if (name == "user-agent")
