@@ -127,10 +127,24 @@ def _kodi_connect_ex(sock, address, _connect_ex=_socket.socket.connect_ex):
         return error.errno
     return _connect_ex(sock, address)
 
+def _kodi_sendto(sock, data, *args, _sendto=_socket.socket.sendto):
+    if args:
+        _kodi_bind_uplink(sock, args[-1])
+    return _sendto(sock, data, *args)
+
+def _kodi_sendmsg(sock, buffers, ancdata=(), flags=0, address=None,
+                  _sendmsg=_socket.socket.sendmsg):
+    if address is None:
+        return _sendmsg(sock, buffers, ancdata, flags)
+    _kodi_bind_uplink(sock, address)
+    return _sendmsg(sock, buffers, ancdata, flags, address)
+
 if not getattr(_socket.socket.connect, "_kodi_uplink", False):
     _kodi_connect._kodi_uplink = True
     _socket.socket.connect = _kodi_connect
     _socket.socket.connect_ex = _kodi_connect_ex
+    _socket.socket.sendto = _kodi_sendto
+    _socket.socket.sendmsg = _kodi_sendmsg
 )PY";
 } // unnamed namespace
 
