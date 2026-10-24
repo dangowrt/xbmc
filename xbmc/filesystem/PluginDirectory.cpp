@@ -66,12 +66,13 @@ void ApplyAddonUplink(const std::string& addonId, CFileItem& item)
   if (!URIUtils::IsHTTP(path))
     return;
 
-  const std::string address = KODI::NETWORK::ResolveUplinkAddress(spec);
-  if (address.empty())
-    return;
+  const KODI::NETWORK::UplinkBinding uplink = KODI::NETWORK::RequireUplink(spec);
 
   CURL url(path);
-  url.SetProtocolOption("local_addr", address);
+  if (uplink.address.empty())
+    url.SetProtocolOption("local_dev", uplink.device);
+  else
+    url.SetProtocolOption("local_addr", uplink.address);
   item.SetPath(url.Get());
 
   const std::string inputstream = item.GetProperty("inputstream").asString();
