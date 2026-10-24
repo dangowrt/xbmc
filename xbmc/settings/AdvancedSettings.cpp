@@ -14,6 +14,7 @@
 #include "application/AppParams.h"
 #include "filesystem/SpecialProtocol.h"
 #include "network/DNSNameCache.h"
+#include "network/UplinkAddress.h"
 #include "profiles/ProfileManager.h"
 #include "resources/LocalizeStrings.h"
 #include "resources/ResourcesComponent.h"
@@ -976,8 +977,15 @@ void CAdvancedSettings::ParseSettingsFile(const std::string &file)
         uplink.addonId = XMLUtils::GetAttribute(pUplink, "id");
         uplink.localAddress = XMLUtils::GetAttribute(pUplink, "localaddress");
 
+        const std::string dns = XMLUtils::GetAttribute(pUplink, "dns");
+        if (!uplink.localAddress.empty() && !dns.empty())
+          uplink.localAddress += ";dns=" + dns;
+
         if (!uplink.addonId.empty() && !uplink.localAddress.empty())
+        {
+          KODI::NETWORK::RegisterUplink(uplink.localAddress);
           m_addonUplinks.emplace_back(uplink);
+        }
         else
           CLog::Log(LOGWARNING, "Ignoring malformed addon uplink, both id and localaddress are "
                                 "required");

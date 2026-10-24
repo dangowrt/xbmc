@@ -19,8 +19,13 @@
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <net/if.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#endif
+
+#if defined(HAS_UPLINKDNS)
+#include <uplinkdns.h>
 #endif
 
 namespace KODI::NETWORK
@@ -116,16 +121,60 @@ std::string PrefixAddress(const std::string& key, int family)
 
   return FirstAddress(prefixFamily, {}, &network, static_cast<unsigned int>(bits));
 }
+
+bool SyntheticName(const std::string& host, std::string& name)
+{
+#if defined(HAS_UPLINKDNS)
+  sockaddr_in6 sin6 = {};
+  sockaddr_in sin = {};
+  char text[NI_MAXHOST] = {};
+  int ret = -1;
+
+  if (inet_pton(AF_INET, host.c_str(), &sin.sin_addr) == 1)
+  {
+    sin.sin_family = AF_INET;
+    ret = uplinkdns_name_get(reinterpret_cast<sockaddr*>(&sin), sizeof(sin), text, sizeof(text));
+  }
+  else if (inet_pton(AF_INET6, host.c_str(), &sin6.sin6_addr) == 1)
+  {
+    sin6.sin6_family = AF_INET6;
+    ret = uplinkdns_name_get(reinterpret_cast<sockaddr*>(&sin6), sizeof(sin6), text, sizeof(text));
+  }
+
+  if (ret != 0)
+    return false;
+
+  name = text;
+  return true;
+#else
+  return false;
+#endif
+}
 #endif
 } // unnamed namespace
+
+std::string UplinkKey(const std::string& spec)
+{
+  return spec.substr(0, spec.find(';'));
+}
+
+void RegisterUplink(const std::string& spec)
+{
+#if defined(HAS_UPLINKDNS)
+  if (!spec.empty() && uplinkdns_uplink_add(spec.c_str()) < 0)
+    CLog::LogF(LOGERROR, "invalid uplink specification '{}'", spec);
+#endif
+}
 
 UplinkBinding ResolveUplink(const std::string& spec, int family)
 {
   UplinkBinding binding;
-  const std::string& key = spec;
+  const std::string key = UplinkKey(spec);
 
   if (key.empty())
     return binding;
+
+  RegisterUplink(spec);
 
 #if !defined(TARGET_POSIX)
   binding.address = key;
@@ -164,7 +213,7 @@ UplinkBinding RequireUplink(const std::string& spec)
 
   // no device carries the key of an unavailable uplink, so binding to it fails the request
   if (!binding.IsValid())
-    binding.device = spec;
+    binding.device = UplinkKey(spec);
 
   return binding;
 }
@@ -187,6 +236,10 @@ bool IsDirectDestination(const std::string& host)
     return true;
 
 #if defined(TARGET_POSIX)
+  std::string name;
+  if (SyntheticName(host, name))
+    return name.find('.') == std::string::npos;
+
   in6_addr address6 = {};
   if (inet_pton(AF_INET6, host.c_str(), &address6) == 1)
     return IN6_IS_ADDR_LOOPBACK(&address6) || IN6_IS_ADDR_LINKLOCAL(&address6) ||

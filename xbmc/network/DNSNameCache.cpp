@@ -32,8 +32,21 @@
 #include <sys/socket.h>
 #endif
 
+#if defined(HAS_UPLINKDNS)
+#include <uplinkdns.h>
+#endif
+
 namespace
 {
+int SystemLookup(const char* host, const addrinfo* hints, addrinfo** res)
+{
+#if defined(HAS_UPLINKDNS)
+  return uplinkdns_getaddrinfo(UPLINKDNS_CTX_SYSTEM, host, nullptr, hints, res);
+#else
+  return getaddrinfo(host, nullptr, hints, res);
+#endif
+}
+
 bool IsUnusableIPv4Address(uint32_t address)
 {
   address = ntohl(address);
@@ -128,7 +141,7 @@ bool CDNSNameCache::Lookup(const std::string& strHostName, std::string& strIpAdd
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags |= AI_CANONNAME;
 
-  if (getaddrinfo(strHostName.c_str(), nullptr, &hints, &res) == 0)
+  if (SystemLookup(strHostName.c_str(), &hints, &res) == 0)
   {
     strIpAddress = KODI::NETWORK::SelectDNSAddress(res);
     freeaddrinfo(res);

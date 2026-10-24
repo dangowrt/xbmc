@@ -21,6 +21,8 @@ struct UplinkBinding
   bool IsValid() const { return !device.empty() || !address.empty(); }
 };
 
+std::string UplinkKey(const std::string& spec);
+void RegisterUplink(const std::string& spec);
 UplinkBinding ResolveUplink(const std::string& spec, int family);
 UplinkBinding RequireUplink(const std::string& spec);
 std::string ResolveUplinkAddress(const std::string& spec);
