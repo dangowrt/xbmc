@@ -24,6 +24,7 @@
 #include "application/Application.h"
 #include "application/ApplicationComponents.h"
 #include "application/ApplicationPlayer.h"
+#include "cores/WebPlayer/WebApp.h"
 #include "cores/WebPlayer/WebPlayerDefs.h"
 #include "filesystem/PluginDirectory.h"
 #include "games/tags/GameInfoTag.h"
@@ -197,9 +198,13 @@ static int RunAddon(const std::vector<std::string>& params)
         return 0;
       }
 
-      const std::string url =
-          params.size() >= 2 ? params[1]
-                             : webapp->Type(AddonType::WEBAPP)->GetValue("@starturl").asString();
+      const CAddonType* type = webapp->Type(AddonType::WEBAPP);
+      std::string url =
+          params.size() >= 2
+              ? params[1]
+              : KODI::WEB::WebAppElement(*type, "starturl", webapp->GetSetting("starturl"));
+      if (url.empty())
+        url = type->GetValue("@starturl").asString();
       CFileItem item(url, false);
       item.SetProperty(KODI::WEB::PROPERTY_PROFILE, addonid);
       if (!g_application.PlayMedia(item, KODI::WEB::PLAYER_NAME, PLAYLIST::Id::TYPE_NONE))

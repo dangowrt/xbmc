@@ -10,6 +10,7 @@ if(TARGET ${APP_NAME_LC}::WaylandServer)
   set(HEADERS GUIDialogWebKeyboard.h
               GUIDialogWebOSD.h
               GUIWindowFullScreenWeb.h
+              WebApp.h
               WebAudioServer.h
               WebClientManager.h
               WebPlayer.h

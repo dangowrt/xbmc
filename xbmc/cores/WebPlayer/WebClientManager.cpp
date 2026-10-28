@@ -12,6 +12,7 @@
 #include "FileItemList.h"
 #include "GUIDialogWebKeyboard.h"
 #include "ServiceBroker.h"
+#include "WebApp.h"
 #include "addons/Addon.h"
 #include "addons/AddonManager.h"
 #include "addons/addoninfo/AddonType.h"
@@ -414,13 +415,9 @@ bool CWebClientManager::ConfigureViewFromAddon(const std::string& profile)
     return false;
 
   const std::string identity = webapp->GetSetting("identity");
-  std::string userAgent = identity == "custom" ? webapp->GetSetting("useragent") : "";
-  for (const auto& [element, values] : type->GetValues())
-  {
-    if (element == "useragent" && userAgent.empty() &&
-        values.GetValue("useragent@id").asString() == identity)
-      userAgent = values.GetValue("useragent").asString();
-  }
+  const std::string userAgent = identity == "custom"
+                                    ? webapp->GetSetting("useragent")
+                                    : KODI::WEB::WebAppElement(*type, "useragent", identity);
   if (!userAgent.empty())
     m_host->WebViewSetUserAgent(profile, userAgent);
 
