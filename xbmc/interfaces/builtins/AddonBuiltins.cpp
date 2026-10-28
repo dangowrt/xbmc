@@ -186,6 +186,7 @@ static int RunAddon(const std::vector<std::string>& params)
     else if (addonMgr.GetAddon(addonid, addon, AddonType::WEBAPP, OnlyEnabled::CHOICE_YES))
     {
       const auto webapp = std::dynamic_pointer_cast<CAddon>(addon);
+      CServiceBroker::GetAddonMgr().UpdateLastUsed(addonid);
       const auto appPlayer = CServiceBroker::GetAppComponents().GetComponent<CApplicationPlayer>();
       // a web app already shown comes back as it was, playing or not
       if (params.size() < 2 && appPlayer->IsWebPlaying() &&
