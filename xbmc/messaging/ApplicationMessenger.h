@@ -313,6 +313,24 @@ public:
   int SendMsg(uint32_t messageId, int param1, int param2, void* payload, std::string strParam, std::vector<std::string> params);
 
   /*!
+   * \brief Send a blocking message, but stop waiting once abortEvent is set
+   *
+   * For a thread that the app thread may itself be waiting on. If abortEvent is set before the
+   * app thread takes the message, the message is dropped and never processed. If it is already
+   * being processed, this still waits for it to finish. On the app thread it is processed straight
+   * away. Either way the payload is not touched once this returns.
+   *
+   * \param [in] messageId defined further up in this file
+   * \param [in] param1 value depends on the message being sent
+   * \param [in] param2 value depends on the message being sent
+   * \param [in] payload this is a void pointer that is meant to send larger objects to the receiver
+   * \param [in] abortEvent ends the wait when set
+   * \return true if the message was processed, false if it was dropped
+   */
+  bool SendMsgAbortable(
+      uint32_t messageId, int param1, int param2, void* payload, CEvent& abortEvent);
+
+  /*!
    * \brief Send a non-blocking message and return immediately
    *
    * If and what the response is depends entirely on the message being sent and
@@ -431,6 +449,7 @@ private:
   CApplicationMessenger const& operator=(CApplicationMessenger const&) = delete;
 
   int SendMsg(ThreadMessage&& msg, bool wait);
+  void Enqueue(ThreadMessage* msg);
   void ProcessMessage(ThreadMessage *pMsg);
 
   std::queue<ThreadMessage*> m_vecMessages; /*!< queue for regular messages */
