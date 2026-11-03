@@ -45,6 +45,13 @@ std::string GetSharedLibraryNameRegexPattern()
   // linux is different and has the version number after the suffix
   return "^.*" + suffix + R"(\.?\d*\.?\d*\.?\d*$)";
 }
+
+std::string GetAssetPath(const std::string& basePath, const std::string& asset)
+{
+  if (URIUtils::IsHTTP(asset))
+    return asset;
+  return URIUtils::AddFileToFolder(basePath, asset);
+}
 }
 
 namespace ADDON
@@ -451,33 +458,33 @@ bool CAddonInfoBuilder::ParseXML(const AddonInfoPtr& addon,
           if (value == "icon")
           {
             if (elementsAssets->GetText() != nullptr)
-              addon->m_icon = URIUtils::AddFileToFolder(assetBasePath, elementsAssets->GetText());
+              addon->m_icon = GetAssetPath(assetBasePath, elementsAssets->GetText());
           }
           else if (value == "screenshot")
           {
             if (elementsAssets->GetText() != nullptr)
-              addon->m_screenshots.emplace_back(URIUtils::AddFileToFolder(assetBasePath, elementsAssets->GetText()));
+              addon->m_screenshots.emplace_back(
+                  GetAssetPath(assetBasePath, elementsAssets->GetText()));
           }
           else if (value == "fanart")
           {
             if (elementsAssets->GetText() != nullptr)
-              addon->m_art[value] = URIUtils::AddFileToFolder(assetBasePath, elementsAssets->GetText());
+              addon->m_art[value] = GetAssetPath(assetBasePath, elementsAssets->GetText());
           }
           else if (value == "banner")
           {
             if (elementsAssets->GetText() != nullptr)
-              addon->m_art[value] = URIUtils::AddFileToFolder(assetBasePath, elementsAssets->GetText());
+              addon->m_art[value] = GetAssetPath(assetBasePath, elementsAssets->GetText());
           }
           else if (value == "clearlogo")
           {
             if (elementsAssets->GetText() != nullptr)
-              addon->m_art[value] = URIUtils::AddFileToFolder(assetBasePath, elementsAssets->GetText());
+              addon->m_art[value] = GetAssetPath(assetBasePath, elementsAssets->GetText());
           }
           else if (value == "thumb")
           {
             if (elementsAssets->GetText() != nullptr)
-              addon->m_art[value] =
-                  URIUtils::AddFileToFolder(assetBasePath, elementsAssets->GetText());
+              addon->m_art[value] = GetAssetPath(assetBasePath, elementsAssets->GetText());
           }
         }
       }

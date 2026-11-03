@@ -69,6 +69,7 @@ public:
   bool Supports(ERENDERFEATURE feature) const;
   bool IsExternalPlaying() const;
   bool IsRemotePlaying() const;
+  bool IsWebPlaying() const;
 
   /*!
    * \brief Get the name of the player in use
