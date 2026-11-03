@@ -38,6 +38,9 @@ public:
       const std::vector<std::unique_ptr<CDRMEncoder>>& encoders) const;
   int GetModesCount() const { return m_connector->count_modes; }
   drmModeModeInfoPtr GetModeForIndex(int index) const { return &m_connector->modes[index]; }
+  // the display's size in millimetres as its EDID tells, 0 when unknown
+  uint32_t GetPhysicalWidth() const { return m_connector->mmWidth; }
+  uint32_t GetPhysicalHeight() const { return m_connector->mmHeight; }
 
   bool IsConnected() { return m_connector->connection == DRM_MODE_CONNECTED; }
   bool CheckConnector();
