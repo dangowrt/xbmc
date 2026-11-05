@@ -25995,7 +25995,7 @@ msgstr ""
 #. Help text of the setting that picks the uplink of a web app
 #: system/settings/webapp.xml
 msgctxt "#40257"
-msgid "Leave every connection of this app through a chosen uplink. Give an address, a subnet such as 192.168.5.0/24, or an interface name. An address or a subnet binds each connection to that local source address; an interface name also pins each connection to that interface, so it never leaves through another one, even when the routing or the address changes. A subnet or an interface name is resolved for every connection, so a new DHCP lease is picked up. A connection that cannot be bound fails rather than taking the default route. Empty means the system default route."
+msgid "Leave every connection of this app through a chosen uplink. Give an address, a subnet such as 192.168.5.0/24, or an interface name. An address or a subnet binds each connection to that local source address; an interface name also pins each connection to that interface, so it never leaves through another one, even when the routing or the address changes. A subnet or an interface name is resolved for every connection, so a new DHCP lease is picked up. A connection that cannot be bound fails rather than taking the default route, and the app does not open while nothing matches. Empty means the system default route."
 msgstr ""
 
 #. Notification text when the settings of a web app cannot be loaded
@@ -26076,7 +26076,13 @@ msgctxt "#40270"
 msgid "Let the app play protected video through the DRM module, such as Widevine. Off offers the app no DRM, and a service such as YouTube then serves its free video in the clear, which the hardware decodes. On also plays protected video, but the DRM module decodes it in software, which on small devices may be too slow for high resolutions."
 msgstr ""
 
-#empty strings from id 40271 to 40399
+#empty strings from id 40271 to 40398
+
+#. Notification text when a web app's uplink has no local address
+#: xbmc/cores/WebPlayer/WebClientManager.cpp
+msgctxt "#40399"
+msgid "The uplink {0:s} is not available."
+msgstr ""
 
 # Video versions
 

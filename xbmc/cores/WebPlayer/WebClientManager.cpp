@@ -32,6 +32,7 @@
 #include "jobs/JobManager.h"
 #include "kodi-web-audio.h"
 #include "kodi-web-video.h"
+#include "network/UplinkAddress.h"
 #include "resources/LocalizeStrings.h"
 #include "resources/ResourcesComponent.h"
 #include "settings/Settings.h"
@@ -68,6 +69,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <limits>
 #include <mutex>
@@ -76,9 +78,14 @@
 #include <utility>
 
 #include <fcntl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <xf86drm.h>
+
+#if defined(HAS_UPLINKDNS)
+#include <uplinkdns.h>
+#endif
 
 using namespace KODI::WEB;
 using namespace KODI::WAYLANDHOST;
@@ -163,6 +170,33 @@ std::string CdmIn(const std::string& directory)
   return {};
 }
 
+void AddUplinkEnvironment(std::map<std::string, std::string>& env)
+{
+#if defined(HAS_UPLINKDNS)
+  ADDON::VECADDONS addons;
+  CServiceBroker::GetAddonMgr().GetAddons(addons, ADDON::AddonType::WEBAPP);
+
+  std::string uplinks;
+  for (const auto& addon : addons)
+  {
+    const std::string uplink = addon->GetSetting("uplinkaddress");
+    if (!uplink.empty())
+      uplinks += (uplinks.empty() ? "" : " ") + uplink;
+  }
+
+  // the client's network process resolves each session's names through the uplink it binds to
+  if (uplinks.empty())
+    return;
+
+  std::string preload = UPLINKDNS_SONAME;
+  if (const char* inherited = std::getenv("LD_PRELOAD"); inherited && *inherited)
+    preload = std::string(inherited) + " " + preload;
+
+  env.emplace("LD_PRELOAD", preload);
+  env.emplace("UPLINKDNS_UPLINKS", uplinks);
+#endif
+}
+
 void NotifyOpenError(const std::string& profile, const std::string& reason)
 {
   ADDON::AddonPtr addon;
@@ -174,6 +208,16 @@ void NotifyOpenError(const std::string& profile, const std::string& reason)
   // "Error opening {0:s}"
   CGUIDialogKaiToast::QueueNotification(
       CGUIDialogKaiToast::Error, StringUtils::Format(localizeStrings.Get(13329), name), reason);
+}
+
+void NotifyUplinkMissing(const std::string& profile, const std::string& uplink)
+{
+  CLog::Log(LOGERROR, "CWebClientManager::{}: the uplink \"{}\" of {} does not resolve",
+            __FUNCTION__, uplink, profile);
+
+  const auto& localizeStrings = CServiceBroker::GetResourcesComponent().GetLocalizeStrings();
+  // "The uplink {0:s} is not available."
+  NotifyOpenError(profile, StringUtils::Format(localizeStrings.Get(40399), uplink));
 }
 
 bool WebAppSettingsLoad(const std::string& profile)
@@ -706,6 +750,7 @@ void CWebClientManager::Spawn()
   if (!cdm.empty())
     env.emplace("KODI_WEB_CDM_DIR", cdm);
   m_clientCdm = CdmIn(cdm);
+  AddUplinkEnvironment(env);
   m_host->SpawnClient({command}, std::move(env));
 }
 
@@ -743,6 +788,11 @@ bool CWebClientManager::RequestView(const std::string& profile, IWebViewObserver
   }
 
   const std::string uplink = UplinkOf(profile);
+  if (!uplink.empty() && !KODI::NETWORK::ResolveUplink(uplink, AF_UNSPEC).IsValid())
+  {
+    NotifyUplinkMissing(profile, uplink);
+    return false;
+  }
 
   std::unique_lock lock(m_lock);
   m_observer = &observer;
