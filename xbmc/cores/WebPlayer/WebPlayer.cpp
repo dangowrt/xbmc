@@ -53,7 +53,8 @@ constexpr int RENDER_BUFFERS = 3;
 
 // The web window's keymap section claims keys for Kodi outright. Of the
 // others, a key bound globally to a Kodi command or to the volume stays
-// with Kodi as well, unless it types a character into the page.
+// with Kodi as well, unless it types a character into the page or is one of
+// the colour keys, which TV pages use for their own menus.
 bool IsKodiKey(const XBMC_keysym& keysym, const CKey& key)
 {
   CInputManager& input = CServiceBroker::GetInputManager();
@@ -62,6 +63,17 @@ bool IsKodiKey(const XBMC_keysym& keysym, const CKey& key)
 
   if (keysym.unicode >= 0x20 && keysym.unicode != 0x7f)
     return false;
+
+  switch (keysym.sym)
+  {
+    case XBMCK_RED:
+    case XBMCK_GREEN:
+    case XBMCK_YELLOW:
+    case XBMCK_BLUE:
+      return false;
+    default:
+      break;
+  }
 
   switch (input.GetAction(WINDOW_FULLSCREEN_WEB, key, true).GetID())
   {
