@@ -39,7 +39,7 @@ struct TypeMapping
 };
 
 // clang-format off
-static constexpr const std::array<TypeMapping, 43> types =
+static constexpr const std::array<TypeMapping, 44> types =
   {{
    {"unknown",                           "", AddonType::UNKNOWN,                 0, AddonInstanceSupport::SUPPORT_NONE,      "" },
    {"xbmc.metadata.scraper.albums",      "", AddonType::SCRAPER_ALBUMS,      24016, AddonInstanceSupport::SUPPORT_NONE,      "DefaultAddonAlbumInfo.png" },
@@ -84,6 +84,7 @@ static constexpr const std::array<TypeMapping, 43> types =
    {"kodi.vfs",                          "", AddonType::VFS,                 39013, AddonInstanceSupport::SUPPORT_MANDATORY, "DefaultAddonVfs.png" },
    {"kodi.imagedecoder",                 "", AddonType::IMAGEDECODER,        39015, AddonInstanceSupport::SUPPORT_MANDATORY, "DefaultAddonImageDecoder.png" },
    {"kodi.webapp",                       "", AddonType::WEBAPP,              40243, AddonInstanceSupport::SUPPORT_NONE,      "DefaultAddonWebSkin.png" },
+   {"kodi.webapp.module",                "", AddonType::WEBAPP_MODULE,       40259, AddonInstanceSupport::SUPPORT_NONE,      "DefaultAddonLibrary.png" },
   }};
 // clang-format on
 
