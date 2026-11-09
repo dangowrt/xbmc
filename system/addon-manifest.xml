@@ -56,7 +56,9 @@
   <addon>xbmc.webinterface</addon>
   <addon optional="true">game.shader.presets</addon>
   <addon optional="true">inputstream.adaptive</addon>
+  <addon optional="true">inputstream.ffmpegdirect</addon>
   <addon optional="true">peripheral.joystick</addon>
+  <addon optional="true">pvr.iptvsimple</addon>
   <addon optional="true">repository.dangowrt.webapps</addon>
   <addon optional="true">service.xbmc.versioncheck</addon>
 </addons>
