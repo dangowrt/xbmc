@@ -8609,7 +8609,12 @@ msgctxt "#14130"
 msgid "Pointer motion wakes the display"
 msgstr ""
 
-#empty strings from id 14131 to 14186
+#: system/settings/settings.xml
+msgctxt "#14131"
+msgid "Stop video when the display switches off"
+msgstr ""
+
+#empty strings from id 14132 to 14186
 
 #: system/settings/settings.xml
 msgctxt "#14187"
@@ -20430,7 +20435,15 @@ msgctxt "#36058"
 msgid "Automatic"
 msgstr ""
 
-#empty strings from id 36059 to 36095
+#empty string with id 36059
+
+#. Description of setting with label #14131 "Stop video when the display switches off"
+#: system/settings/settings.xml
+msgctxt "#36060"
+msgid "Stop video playback when the display switches off, after the idle time or from the power menu, as a television does. Music keeps playing."
+msgstr ""
+
+#empty strings from id 36061 to 36095
 
 #. Label of setting "System / Display / Use system HDR/SDR brightness balance"
 #: system/settings/settings.xml

@@ -74,6 +74,7 @@ protected:
   void InhibitScreenSaver(bool inhibit);
   void ResetScreenSaverTimer();
   bool WakeUpScreenSaver(bool bPowerOffKeyPressed = false);
+  void StopVideoWhileDPMS();
 
   void InhibitIdleShutdown(bool inhibit);
 
