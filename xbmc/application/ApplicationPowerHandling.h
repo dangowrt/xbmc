@@ -61,6 +61,14 @@ public:
   bool IsDPMSActive() const { return m_dpmsIsActive; }
   bool ToggleDPMS(bool manual);
 
+  /*!
+   * \brief Switch the display off as an idle blank would, so that anything
+   *        that wakes from idle DPMS switches it back on.
+   *
+   * \return true if the display was switched off
+   */
+  bool ActivateDPMS();
+
   // Wakes up from the screensaver and / or DPMS. Returns true if woken up.
   bool WakeUpScreenSaverAndDPMS(bool bPowerOffKeyPressed = false);
 

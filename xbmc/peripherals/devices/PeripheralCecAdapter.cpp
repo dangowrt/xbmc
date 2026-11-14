@@ -1335,6 +1335,12 @@ void CPeripheralCecAdapter::CecSourceActivated(void* cbParam,
     const auto appPower = components.GetComponent<CApplicationPowerHandling>();
     appPower->WakeUpScreenSaverAndDPMS();
   }
+  else if (adapter->GetSettingBool("display_off_on_deactivate"))
+  {
+    auto& components = CServiceBroker::GetAppComponents();
+    const auto appPower = components.GetComponent<CApplicationPowerHandling>();
+    appPower->ActivateDPMS();
+  }
 
   if (adapter->GetSettingInt("pause_or_stop_playback_on_deactivate") != LOCALISED_ID_NONE)
   {

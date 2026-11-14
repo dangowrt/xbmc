@@ -20520,7 +20520,13 @@ msgctxt "#36059"
 msgid "Step size of the brightness, contrast, hue and saturation sliders in the video settings."
 msgstr ""
 
-#empty strings from id 36060 to 36095
+#. Label of CEC setting display_off_on_deactivate: whether Kodi switches its display output off while the TV shows another source
+#: system/peripherals.xml
+msgctxt "#36060"
+msgid "Switch off display when switching to another source"
+msgstr ""
+
+#empty strings from id 36061 to 36095
 
 #. Label of setting "System / Display / Use system HDR/SDR brightness balance"
 #: system/settings/settings.xml

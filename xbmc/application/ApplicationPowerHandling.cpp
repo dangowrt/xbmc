@@ -112,6 +112,22 @@ bool CApplicationPowerHandling::ToggleDPMS(bool manual)
   return false;
 }
 
+bool CApplicationPowerHandling::ActivateDPMS()
+{
+  if (m_dpmsIsActive)
+    return false;
+
+  const auto winSystem = CServiceBroker::GetWinSystem();
+  if (!winSystem)
+    return false;
+
+  const std::shared_ptr<CDPMSSupport> dpms = winSystem->GetDPMSManager();
+  if (!dpms || !dpms->IsSupported())
+    return false;
+
+  return ToggleDPMS(false);
+}
+
 bool CApplicationPowerHandling::WakeUpScreenSaverAndDPMS(bool bPowerOffKeyPressed /* = false */)
 {
   bool result = false;
